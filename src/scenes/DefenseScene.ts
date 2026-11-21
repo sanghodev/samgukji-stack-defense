@@ -10,9 +10,12 @@ export interface DefenseHudState {
   playerHp: number;
   playerMaxHp: number;
   playerLevel: number;
+  playerFormName: string;
   playerExp: number;
   playerExpToNext: number;
   weaponTierName: string;
+  skillTier: 1 | 2 | 3;
+  skillDisplayName: string;
   speedLevel: number;
   blastLevel: number;
   skillReadyRatio: number;
@@ -434,23 +437,35 @@ export class DefenseScene extends Phaser.Scene {
   }
 
   private applyTreasure(tr: TreasureDrop): void {
-    this.spawnHitSparks(this.player.x, this.player.y - 24, tr.meta.glowColor, 14);
+    this.spawnHitSparks(this.player.x, this.player.y - 24, tr.meta.glowColor, 18);
     this.spawnFloatingText(
       this.player.x,
-      this.player.y - 74,
+      this.player.y - 76,
       tr.meta.label,
       tr.meta.textColor,
     );
+    this.cameras.main.shake(110, 0.004);
 
+    let evolvedSkill = false;
     if (tr.kind === 'speed_jade') {
-      this.player.upgradeAttackSpeed();
+      evolvedSkill = this.player.upgradeAttackSpeed().evolvedSkill;
     } else if (tr.kind === 'dragon_orb') {
-      this.player.upgradeComboBlast();
+      evolvedSkill = this.player.upgradeComboBlast().evolvedSkill;
     } else {
       this.gold += 60;
       this.player.heal(45);
+      this.player.triggerUpgradeForce(0xfbbf24, 0xfef08a);
       this.player.gainExp(55);
     }
+
+    if (evolvedSkill) {
+      this.game.events.emit('defense:banner', {
+        title: `스킬 진화! ${this.player.skillDisplayName}`,
+        subtitle: 'E 스킬의 모션과 이펙트가 한 단계 진화했습니다!',
+        color: this.player.skillTier === 3 ? '#fde047' : '#6ee7b7',
+      });
+    }
+
     this.emitHudState();
   }
 
@@ -888,9 +903,12 @@ export class DefenseScene extends Phaser.Scene {
       playerHp: Math.ceil(this.player.hp),
       playerMaxHp: this.player.maxHp,
       playerLevel: this.player.level,
+      playerFormName: this.player.formDisplayName,
       playerExp: Math.floor(this.player.exp),
       playerExpToNext: this.player.expToNext,
       weaponTierName: this.player.weaponTierName,
+      skillTier: this.player.skillTier,
+      skillDisplayName: this.player.skillDisplayName,
       speedLevel: this.player.speedLevel,
       blastLevel: this.player.blastLevel,
       skillReadyRatio: this.player.skillCooldownRatio,

@@ -24,6 +24,7 @@ export class UIScene extends Phaser.Scene {
   private playerExpBar!: Phaser.GameObjects.Graphics;
   private playerLevelText!: Phaser.GameObjects.Text;
   private playerUpgradeText!: Phaser.GameObjects.Text;
+  private skillNameText!: Phaser.GameObjects.Text;
   private skillBar!: Phaser.GameObjects.Graphics;
   private skillText!: Phaser.GameObjects.Text;
 
@@ -352,8 +353,8 @@ export class UIScene extends Phaser.Scene {
     // EXP bar under HP bar
     this.playerExpBar = this.add.graphics();
 
-    // E Skill: 360-degree Whirlwind Slash
-    this.add.text(320, 662, '회전 베기 [E]', {
+    // E Skill: Evolves with upgrades (청룡 회오리 -> ★ 질풍 쌍룡참 -> ✦ 청룡승천파)
+    this.skillNameText = this.add.text(320, 662, '청룡 회오리 [E]', {
       fontFamily: 'Malgun Gothic, sans-serif',
       fontSize: '12px',
       fontStyle: 'bold',
@@ -641,8 +642,10 @@ export class UIScene extends Phaser.Scene {
     }
     this.lastComboShown = state.comboCount;
 
-    // 5. Bottom Zhao Yun Level, Weapon, HP, EXP & E-Skill
-    this.playerLevelText.setText(`LV.${state.playerLevel} 조운 · ${state.weaponTierName}`);
+    // 5. Bottom Zhao Yun Level, Transformed Form, Weapon, HP, EXP & E-Skill
+    this.playerLevelText.setText(
+      `LV.${state.playerLevel} ${state.playerFormName} · ${state.weaponTierName}`,
+    );
     this.playerUpgradeText.setText(`창속 Lv.${state.speedLevel} · 폭발 Lv.${state.blastLevel}`);
 
     const pRatio = Phaser.Math.Clamp(state.playerHp / state.playerMaxHp, 0, 1);
@@ -672,10 +675,28 @@ export class UIScene extends Phaser.Scene {
       this.playerExpBar.fillRoundedRect(34, 684, Math.max(4, Math.round(256 * expRatio)), 8, 3);
     }
 
+    this.skillNameText.setText(state.skillDisplayName);
+    this.skillNameText.setColor(
+      state.skillTier === 3
+        ? '#fde047'
+        : state.skillTier === 2
+          ? '#6ee7b7'
+          : '#22d3ee',
+    );
+
+    const skillBarColor =
+      state.skillReadyRatio < 1
+        ? 0x475569
+        : state.skillTier === 3
+          ? 0xfbbf24
+          : state.skillTier === 2
+            ? 0x10b981
+            : 0x22d3ee;
+
     this.skillBar.clear();
     this.skillBar.fillStyle(0x1c120c, 1);
     this.skillBar.fillRoundedRect(320, 682, 178, 12, 3);
-    this.skillBar.fillStyle(state.skillReadyRatio >= 1 ? 0x22d3ee : 0x475569, 1);
+    this.skillBar.fillStyle(skillBarColor, 1);
     this.skillBar.fillRoundedRect(
       320,
       682,

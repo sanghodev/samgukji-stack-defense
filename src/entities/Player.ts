@@ -63,11 +63,18 @@ export class Player {
   public weaponTier = 0; // 0..3 (일반 -> 강화 -> 영웅 -> 전설)
 
   private readonly shadow: Phaser.GameObjects.Ellipse;
+  private readonly powerAura: Phaser.GameObjects.Graphics;
+  private readonly backWings: Phaser.GameObjects.Graphics;
   private readonly sprite: Phaser.GameObjects.Sprite;
+  private readonly frontFx: Phaser.GameObjects.Graphics;
   private readonly guardAura: Phaser.GameObjects.Graphics;
   private readonly dirScale = 0.72;
   private readonly actionScale = 0.64;
   private readonly runScale = 0.64;
+  private auraPhase = 0;
+  private auraParticleTimer = 0;
+  private trailGhostTimer = 0;
+  private transformStage: 0 | 1 | 2 = 0; // 0: 기본, 1: 청룡 각성, 2: 황금 청룡 무쌍
 
   // Smooth inertia movement & Jump (pseudo-3D Z-axis)
   private readonly maxMoveSpeed = 265;
@@ -152,14 +159,20 @@ export class Player {
     this.onAttack = onAttack;
 
     this.shadow = scene.add.ellipse(0, 2, 44, 20, 0x090b10, 0.36);
+    this.powerAura = scene.add.graphics();
+    this.backWings = scene.add.graphics();
     this.sprite = scene.add.sprite(0, 6, 'zhaoyun_8dir', 2);
     this.sprite.setOrigin(0.5, 0.92);
     this.sprite.setScale(this.dirScale);
 
+    this.frontFx = scene.add.graphics();
     this.guardAura = scene.add.graphics();
     this.visual = scene.add.container(x, y, [
       this.shadow,
+      this.powerAura,
+      this.backWings,
       this.sprite,
+      this.frontFx,
       this.guardAura,
     ]);
     this.visual.setDepth(y);
@@ -209,6 +222,71 @@ export class Player {
     return 1 + (this.level - 1) * 0.14 + (this.blastLevel - 1) * 0.12 + this.weaponTier * 0.1;
   }
 
+  /** Total upgrade power rank (0 = base, 1-2 = awakened, 3-4 = hero, 5+ = legend). */
+  public get powerRank(): number {
+    return (this.speedLevel - 1) + (this.blastLevel - 1) + this.weaponTier;
+  }
+
+  /** E-skill evolution tier (1 = 청룡 회오리, 2 = 질풍 쌍룡참, 3 = 청룡승천파). */
+  public get skillTier(): 1 | 2 | 3 {
+    if (this.blastLevel >= 3 || this.weaponTier >= 2 || this.powerRank >= 4) {
+      return 3;
+    }
+    if (this.blastLevel >= 2 || this.speedLevel >= 2 || this.level >= 3 || this.powerRank >= 1) {
+      return 2;
+    }
+    return 1;
+  }
+
+  public get skillDisplayName(): string {
+    if (this.skillTier === 3) return '✦ 청룡승천파 [E]';
+    if (this.skillTier === 2) return '★ 질풍 쌍룡참 [E]';
+    return '청룡 회오리 [E]';
+  }
+
+  public get formScaleBonus(): number {
+    return this.transformStage === 2 ? 1.12 : this.transformStage === 1 ? 1.05 : 1;
+  }
+
+  public get formDisplayName(): string {
+    if (this.transformStage === 2) return '✦ 황금 청룡 무쌍';
+    if (this.transformStage === 1) return '★ 청룡 각성';
+    return '조운';
+  }
+
+  private checkTransformationEvolution(): void {
+    const targetStage: 0 | 1 | 2 =
+      this.powerRank >= 3 ? 2 : this.powerRank >= 1 ? 1 : 0;
+
+    if (targetStage > this.transformStage) {
+      this.transformStage = targetStage;
+      const isLegend = targetStage === 2;
+
+      // Dramatic transformation camera zoom punch + golden-cyan flash!
+      const cam = this.scene.cameras.main;
+      this.scene.tweens.add({
+        targets: cam,
+        zoom: isLegend ? 1.08 : 1.045,
+        duration: 180,
+        yoyo: true,
+        ease: 'Cubic.easeOut',
+      });
+
+      this.triggerUpgradeForce(
+        isLegend ? 0xfbbf24 : 0x22d3ee,
+        isLegend ? 0x67e8f9 : 0xfde047,
+      );
+
+      this.scene.game.events.emit('defense:banner', {
+        title: isLegend ? '✦ 변신! 황금 청룡 무쌍!!' : '★ 변신! 청룡 각성!',
+        subtitle: isLegend
+          ? '황금 용날개 · 청룡 영혼 · 전설 스킬이 해방되었습니다!'
+          : '청룡 날개 오라 & 고속 잔상 이동이 활성화되었습니다!',
+        color: isLegend ? '#fde047' : '#67e8f9',
+      });
+    }
+  }
+
   /** Grants EXP and triggers flashy Level-Up burst + weapon evolution when threshold is met. */
   public gainExp(amount: number): { leveledUp: boolean; newLevel: number; evolvedWeapon: boolean } {
     this.exp += amount;
@@ -230,19 +308,107 @@ export class Player {
       }
 
       this.triggerLevelUpBurst();
+      this.checkTransformationEvolution();
     }
 
     return { leveledUp, newLevel: this.level, evolvedWeapon };
   }
 
-  public upgradeAttackSpeed(): void {
+  public upgradeAttackSpeed(): { evolvedSkill: boolean } {
+    const prevTier = this.skillTier;
     this.speedLevel = Math.min(9, this.speedLevel + 1);
-    this.flashHit(140, 0x6ee7b7);
+    this.triggerUpgradeForce(0x34d399, 0x67e8f9);
+    this.checkTransformationEvolution();
+    return { evolvedSkill: this.skillTier > prevTier };
   }
 
-  public upgradeComboBlast(): void {
+  public upgradeComboBlast(): { evolvedSkill: boolean } {
+    const prevTier = this.skillTier;
     this.blastLevel = Math.min(9, this.blastLevel + 1);
-    this.flashHit(140, 0x38bdf8);
+    this.triggerUpgradeForce(0x38bdf8, 0xfde047);
+    this.checkTransformationEvolution();
+    return { evolvedSkill: this.skillTier > prevTier };
+  }
+
+  /** Dramatic rising Force/Aura burst when picking up an upgrade treasure! */
+  public triggerUpgradeForce(primaryColor: number, accentColor: number): void {
+    this.flashHit(180, primaryColor);
+
+    // Brief heroic scale pulse on Zhao Yun
+    this.scene.tweens.add({
+      targets: this.visual,
+      scaleX: 1.2,
+      scaleY: 1.2,
+      duration: 120,
+      yoyo: true,
+      ease: 'Back.easeOut',
+    });
+
+    // Vertical Force Pillar shooting skyward
+    const pillar = this.scene.add.rectangle(
+      this.x,
+      this.y - 115,
+      46,
+      250,
+      primaryColor,
+      0.46,
+    );
+    pillar.setDepth(this.y + 56);
+    this.scene.tweens.add({
+      targets: pillar,
+      scaleX: 1.9,
+      alpha: 0,
+      duration: 420,
+      ease: 'Cubic.easeOut',
+      onComplete: () => pillar.destroy(),
+    });
+
+    // Two rising swirling aura rings climbing up Zhao Yun's body
+    for (let r = 0; r < 2; r++) {
+      const ring = this.scene.add.graphics();
+      ring.setPosition(this.x, this.y - r * 14);
+      ring.setDepth(this.y + 58);
+      ring.lineStyle(6 - r * 2, r === 0 ? primaryColor : accentColor, 0.95);
+      ring.strokeEllipse(0, 0, 74, 34);
+
+      this.scene.tweens.add({
+        targets: ring,
+        y: this.y - 86 - r * 24,
+        scaleX: 1.7,
+        scaleY: 1.35,
+        alpha: 0,
+        duration: 420 + r * 90,
+        ease: 'Cubic.easeOut',
+        onComplete: () => ring.destroy(),
+      });
+    }
+
+    // Radial force burst streaks + ground shockwave
+    const burst = this.scene.add.graphics();
+    burst.setPosition(this.x, this.y - 16);
+    burst.setDepth(this.y + 54);
+    burst.lineStyle(5, accentColor, 0.9);
+    burst.strokeCircle(0, 0, 44);
+    for (let i = 0; i < 10; i++) {
+      const a = (i / 10) * Math.PI * 2;
+      burst.lineStyle(3, i % 2 === 0 ? primaryColor : accentColor, 0.95);
+      burst.lineBetween(
+        Math.cos(a) * 26,
+        Math.sin(a) * 26,
+        Math.cos(a) * 76,
+        Math.sin(a) * 76,
+      );
+    }
+    this.scene.tweens.add({
+      targets: burst,
+      scaleX: 1.75,
+      scaleY: 1.75,
+      alpha: 0,
+      rotation: 0.35,
+      duration: 360,
+      ease: 'Cubic.easeOut',
+      onComplete: () => burst.destroy(),
+    });
   }
 
   private triggerLevelUpBurst(): void {
@@ -564,6 +730,7 @@ export class Player {
     this.y = resolved.y;
 
     this.updateSpritePresentation(dt);
+    this.updatePersistentPowerAura(dtMs);
     this.drawAimIndicator();
     this.drawGuardAura();
   }
@@ -657,7 +824,7 @@ export class Player {
         this.sprite.setFrame(targetActionFrame);
       }
       this.sprite.setFlipX(flipX);
-      this.sprite.setScale(this.actionScale);
+      this.sprite.setScale(this.actionScale * this.formScaleBonus);
       this.sprite.rotation = Phaser.Math.Linear(this.sprite.rotation, 0, 0.3);
       this.lastRunFrameIdx = -1;
     } else if (isRunning) {
@@ -678,7 +845,7 @@ export class Player {
         this.sprite.setFrame(frameIdx);
       }
       this.sprite.setFlipX(this.lastRunFlipX);
-      this.sprite.setScale(this.runScale);
+      this.sprite.setScale(this.runScale * this.formScaleBonus);
 
       // Subtle organic forward lean into the run (no cartoonish hopping!)
       const targetLean = Phaser.Math.Clamp(
@@ -710,9 +877,10 @@ export class Player {
 
       this.idleBreathTime += dt * 3.2;
       const breath = Math.sin(this.idleBreathTime) * 0.018;
+      const targetScale = this.dirScale * this.formScaleBonus;
       this.sprite.setScale(
-        Phaser.Math.Linear(this.sprite.scaleX, this.dirScale * (1 - breath * 0.5), 0.22),
-        Phaser.Math.Linear(this.sprite.scaleY, this.dirScale * (1 + breath), 0.22),
+        Phaser.Math.Linear(this.sprite.scaleX, targetScale * (1 - breath * 0.5), 0.22),
+        Phaser.Math.Linear(this.sprite.scaleY, targetScale * (1 + breath), 0.22),
       );
       this.sprite.rotation = Phaser.Math.Linear(this.sprite.rotation, 0, 0.25);
       this.sprite.y = Phaser.Math.Linear(this.sprite.y, 6, 0.25);
@@ -922,28 +1090,426 @@ export class Player {
     });
   }
 
+  /**
+   * Full Visual Transformation Graphics (그래픽 변신!):
+   * - Stage 1 (★ 청룡 각성): Glowing Cyan Energy Wings behind shoulders + crackling sparks + run afterimage trail
+   * - Stage 2 (✦ 황금 청룡 무쌍): Majestic Golden-Cyan Dragon Wings + Rotating Golden Halo behind head
+   *   + Orbiting Azure Dragon Spirit Orb & Tail + Blazing Golden-Cyan Afterimage Trail!
+   */
+  private updatePersistentPowerAura(dtMs: number): void {
+    this.powerAura.clear();
+    this.backWings.clear();
+    this.frontFx.clear();
+
+    const stage = this.transformStage;
+    if (stage === 0) return;
+
+    const isLegend = stage === 2;
+    this.auraPhase += dtMs * (isLegend ? 0.0055 : 0.0044);
+    const pulse = 1 + Math.sin(this.auraPhase * 2) * 0.09;
+    const wingFlap = Math.sin(this.auraPhase * 2.4) * 9;
+    const baseY = -this.jumpZ;
+
+    const primary = isLegend ? 0xfbbf24 : 0x22d3ee;
+    const secondary = isLegend ? 0x38bdf8 : 0x6ee7b7;
+
+    // 1. Ground Force Rune Halo
+    this.powerAura.fillStyle(primary, isLegend ? 0.22 : 0.14);
+    this.powerAura.fillEllipse(0, 2, (isLegend ? 84 : 68) * pulse, (isLegend ? 36 : 30) * pulse);
+    const arcCount = isLegend ? 3 : 2;
+    for (let i = 0; i < arcCount; i++) {
+      const a0 = this.auraPhase * (i % 2 === 0 ? 1 : -1.3) + (i * Math.PI * 2) / arcCount;
+      const rx = (isLegend ? 42 : 34) + i * 5;
+      const ry = (isLegend ? 18 : 14) + i * 2;
+      this.powerAura.lineStyle(isLegend ? 3 : 2, i % 2 === 0 ? primary : secondary, 0.88);
+      this.powerAura.beginPath();
+      for (let s = 0; s <= 10; s++) {
+        const a = a0 + (s / 10) * 1.4;
+        const px = Math.cos(a) * rx;
+        const py = 2 + Math.sin(a) * ry;
+        if (s === 0) this.powerAura.moveTo(px, py);
+        else this.powerAura.lineTo(px, py);
+      }
+      this.powerAura.strokePath();
+    }
+
+    // 2. Radiant Energy / Dragon Wings behind Zhao Yun's shoulders (`backWings`)
+    const shoulderY = baseY - 36;
+    const wingSpan = isLegend ? 62 : 44;
+    const wingHeight = isLegend ? 48 : 34;
+
+    for (const side of [-1, 1]) {
+      // Outer wing plume
+      this.backWings.fillStyle(primary, isLegend ? 0.42 : 0.32);
+      this.backWings.beginPath();
+      this.backWings.moveTo(side * 8, shoulderY);
+      this.backWings.lineTo(side * wingSpan, shoulderY - wingHeight * 0.65 + wingFlap);
+      this.backWings.lineTo(side * (wingSpan * 0.86), shoulderY + 4 + wingFlap * 0.6);
+      this.backWings.lineTo(side * (wingSpan * 0.52), shoulderY + 14 + wingFlap * 0.3);
+      this.backWings.closePath();
+      this.backWings.fillPath();
+
+      // Inner bright wing feathers
+      this.backWings.fillStyle(secondary, isLegend ? 0.72 : 0.58);
+      this.backWings.beginPath();
+      this.backWings.moveTo(side * 6, shoulderY + 2);
+      this.backWings.lineTo(side * (wingSpan * 0.78), shoulderY - wingHeight * 0.42 + wingFlap);
+      this.backWings.lineTo(side * (wingSpan * 0.58), shoulderY + 8 + wingFlap * 0.4);
+      this.backWings.closePath();
+      this.backWings.fillPath();
+
+      // Crisp white-gold wing spine highlight
+      this.backWings.lineStyle(2.5, isLegend ? 0xfef08a : 0xecfeff, 0.92);
+      this.backWings.lineBetween(
+        side * 8,
+        shoulderY,
+        side * (wingSpan * 0.96),
+        shoulderY - wingHeight * 0.6 + wingFlap,
+      );
+    }
+
+    // 3. Stage 2 Legendary: Radiant Rotating Golden Halo behind head!
+    if (isLegend) {
+      const haloY = baseY - 64;
+      this.backWings.lineStyle(4, 0xfbbf24, 0.85);
+      this.backWings.strokeCircle(0, haloY, 24 * pulse);
+      this.backWings.lineStyle(2, 0xffffff, 0.9);
+      this.backWings.strokeCircle(0, haloY, 18 * pulse);
+
+      // 6 rotating golden halo rays
+      for (let i = 0; i < 6; i++) {
+        const a = this.auraPhase * 0.9 + (i / 6) * Math.PI * 2;
+        this.backWings.lineStyle(2.5, 0xfde047, 0.85);
+        this.backWings.lineBetween(
+          Math.cos(a) * 24,
+          haloY + Math.sin(a) * 24,
+          Math.cos(a) * 34,
+          haloY + Math.sin(a) * 34,
+        );
+      }
+    }
+
+    // 4. Orbiting Azure Dragon Spirit Orb & Tail (passes behind/in front of Zhao Yun!)
+    const orbitAngle = this.auraPhase * (isLegend ? 1.85 : 1.45);
+    const orbX = Math.cos(orbitAngle) * (isLegend ? 44 : 34);
+    const orbY = baseY - 30 + Math.sin(orbitAngle) * 14;
+    const targetG = Math.sin(orbitAngle) >= 0 ? this.frontFx : this.backWings;
+
+    // Dragon spirit tail trail (3 trailing beads)
+    for (let t = 3; t >= 1; t--) {
+      const ta = orbitAngle - t * 0.24;
+      const tx = Math.cos(ta) * (isLegend ? 44 : 34);
+      const ty = baseY - 30 + Math.sin(ta) * 14;
+      targetG.fillStyle(secondary, 0.22 * (4 - t));
+      targetG.fillCircle(tx, ty, (isLegend ? 6 : 4.5) - t * 0.9);
+    }
+    targetG.fillStyle(primary, 0.95);
+    targetG.fillCircle(orbX, orbY, isLegend ? 7 : 5);
+    targetG.fillStyle(0xffffff, 1);
+    targetG.fillCircle(orbX, orbY, isLegend ? 3.5 : 2.5);
+
+    // 5. Running / Action Glowing Afterimage Ghost Trail!
+    const speed = Math.hypot(this.moveVx, this.moveVy);
+    this.trailGhostTimer += dtMs;
+    if ((speed > 130 || this.attackPoseTimer > 0) && this.trailGhostTimer >= (isLegend ? 75 : 115)) {
+      this.trailGhostTimer = 0;
+      const ghost = this.scene.add.sprite(
+        this.x,
+        this.y + this.sprite.y,
+        this.sprite.texture.key,
+        this.sprite.frame.name,
+      );
+      ghost.setOrigin(0.5, 0.92);
+      ghost.setScale(this.sprite.scaleX, this.sprite.scaleY);
+      ghost.setFlipX(this.sprite.flipX);
+      ghost.setTint(isLegend ? 0xfde047 : 0x38bdf8);
+      ghost.setAlpha(isLegend ? 0.52 : 0.36);
+      ghost.setDepth(this.y - 3);
+      this.scene.tweens.add({
+        targets: ghost,
+        alpha: 0,
+        duration: isLegend ? 240 : 180,
+        onComplete: () => ghost.destroy(),
+      });
+    }
+
+    // 6. Rising Force Embers / Dragon Sparks
+    this.auraParticleTimer += dtMs;
+    const spawnInterval = isLegend ? 85 : 170;
+    if (this.auraParticleTimer >= spawnInterval) {
+      this.auraParticleTimer = 0;
+      const ox = Phaser.Math.Between(-28, 28);
+      const oy = Phaser.Math.Between(-16, 4);
+      const mote = this.scene.add.circle(
+        this.x + ox,
+        this.y + oy,
+        isLegend ? 3.8 : 2.6,
+        Math.random() < 0.5 ? primary : secondary,
+        0.95,
+      );
+      mote.setDepth(this.y + 8);
+      this.scene.tweens.add({
+        targets: mote,
+        y: mote.y - Phaser.Math.Between(42, 74),
+        alpha: 0,
+        scale: 0.2,
+        duration: 460,
+        ease: 'Cubic.easeOut',
+        onComplete: () => mote.destroy(),
+      });
+    }
+  }
+
   private performWhirlwindSlash(): void {
-    this.whirlwindCooldownTimer = Math.max(1800, Math.round(this.whirlwindCooldownMs / (1 + (this.speedLevel - 1) * 0.08)));
-    this.whirlwindSpinTimer = this.whirlwindSpinDurationMs;
-    this.flashHit(100, 0x67e8f9);
+    const tier = this.skillTier;
+    this.whirlwindCooldownTimer = Math.max(
+      1700,
+      Math.round(this.whirlwindCooldownMs / (1 + (this.speedLevel - 1) * 0.08)),
+    );
+    this.whirlwindSpinTimer = tier === 3 ? 420 : tier === 2 ? 350 : this.whirlwindSpinDurationMs;
+    this.flashHit(130, tier === 3 ? 0xfde047 : tier === 2 ? 0x34d399 : 0x67e8f9);
 
-    const range = 144 + this.weaponTier * 12;
-    const damage = Math.round(Phaser.Math.Between(250, 295) * this.damageMultiplier);
-    this.spawnWhirlwindEffect(range);
+    if (tier === 1) {
+      // Tier 1: 청룡 회오리 (Classic 360° Cyan Whirlwind)
+      const range = 144 + this.weaponTier * 10;
+      const damage = Math.round(Phaser.Math.Between(245, 285) * this.damageMultiplier);
+      this.spawnWhirlwindEffect(range);
 
+      this.onAttack({
+        x: this.x,
+        y: this.y,
+        angle: this.facingAngle,
+        range,
+        halfArcRad: Math.PI,
+        damage,
+        knockback: 500,
+        isWhirlwind: true,
+        isComboExplosion: true,
+        isCrit: true,
+        hitstopMs: 52,
+        label: '청룡 회오리!',
+      });
+      return;
+    }
+
+    if (tier === 2) {
+      // Tier 2: ★ 질풍 쌍룡참 (Twin Phantom Afterimages + Double-Hit Emerald-Cyan Vortex!)
+      const range = 166 + this.weaponTier * 12;
+      const hitDmg = Math.round(Phaser.Math.Between(185, 215) * this.damageMultiplier);
+
+      this.spawnSkillPhantoms(2, 0x34d399, 34);
+      this.spawnTwinDragonVortexEffect(range);
+
+      // Hit 1 immediately
+      this.onAttack({
+        x: this.x,
+        y: this.y,
+        angle: this.facingAngle,
+        range,
+        halfArcRad: Math.PI,
+        damage: hitDmg,
+        knockback: 260,
+        isWhirlwind: true,
+        isComboExplosion: true,
+        isCrit: true,
+        hitstopMs: 42,
+        label: '★ 질풍 쌍룡참!',
+      });
+
+      // Hit 2 follow-up burst 150ms later!
+      this.scene.time.delayedCall(150, () => {
+        if (!this.visual.active || this.hp <= 0) return;
+        this.spawnTwinDragonVortexEffect(range * 1.12);
+        this.onAttack({
+          x: this.x,
+          y: this.y,
+          angle: this.facingAngle,
+          range: range * 1.1,
+          halfArcRad: Math.PI,
+          damage: Math.round(hitDmg * 1.25),
+          knockback: 560,
+          isWhirlwind: true,
+          isComboExplosion: true,
+          isCrit: true,
+          hitstopMs: 55,
+        });
+      });
+      return;
+    }
+
+    // Tier 3: ✦ 전설 청룡승천파 (Airborne Ascension + 4 Golden-Cyan Phantoms + 8 Sky Lightning Pillars!)
+    const range = 198 + this.weaponTier * 14;
+    const baseDmg = Math.round(Phaser.Math.Between(215, 255) * this.damageMultiplier);
+
+    // Slight dramatic hover hop during ascension
+    this.jumpZ = Math.max(this.jumpZ, 26);
+    this.jumpVz = 140;
+
+    this.spawnSkillPhantoms(4, 0xfde047, 46);
+    this.spawnDragonAscensionEffect(range);
+
+    // Initial Dragon Ascension sweep
     this.onAttack({
       x: this.x,
       y: this.y,
       angle: this.facingAngle,
       range,
       halfArcRad: Math.PI,
-      damage,
-      knockback: 520,
+      damage: baseDmg,
+      knockback: 320,
       isWhirlwind: true,
       isComboExplosion: true,
       isCrit: true,
-      hitstopMs: 55,
-      label: '청룡 회오리!',
+      hitstopMs: 52,
+      label: '✦ 청룡승천파!!',
+    });
+
+    // Follow-up Sky-to-Ground Lightning Nova 180ms later!
+    this.scene.time.delayedCall(180, () => {
+      if (!this.visual.active || this.hp <= 0) return;
+      this.spawnDragonAscensionLightning(range);
+      this.onAttack({
+        x: this.x,
+        y: this.y,
+        angle: this.facingAngle,
+        range: range * 1.15,
+        halfArcRad: Math.PI,
+        damage: Math.round(baseDmg * 1.45),
+        knockback: 640,
+        isWhirlwind: true,
+        isComboExplosion: true,
+        isCrit: true,
+        hitstopMs: 65,
+      });
+    });
+  }
+
+  /** Spawns glowing Zhao Yun phantom clones around him during evolved E-skills! */
+  private spawnSkillPhantoms(count: number, tint: number, radius: number): void {
+    for (let i = 0; i < count; i++) {
+      const angle = (i / count) * Math.PI * 2;
+      const px = this.x + Math.cos(angle) * radius;
+      const py = this.y + Math.sin(angle) * (radius * 0.65);
+      const ghost = this.scene.add.sprite(
+        px,
+        py,
+        'zhaoyun_actions',
+        i % 2 === 0 ? ACTION_FRAME.WHIRLWIND : ACTION_FRAME.COMBO_3,
+      );
+      ghost.setOrigin(0.5, 0.92);
+      ghost.setScale(this.actionScale * 1.05);
+      ghost.setFlipX(Math.cos(angle) < 0);
+      ghost.setTint(tint);
+      ghost.setAlpha(0.75);
+      ghost.setDepth(py - 1);
+
+      this.scene.tweens.add({
+        targets: ghost,
+        x: px + Math.cos(angle) * 28,
+        y: py + Math.sin(angle) * 18,
+        alpha: 0,
+        scale: this.actionScale * 1.25,
+        duration: 320,
+        ease: 'Cubic.easeOut',
+        onComplete: () => ghost.destroy(),
+      });
+    }
+  }
+
+  /** Tier 2 E-Skill VFX: Twin emerald-cyan spiralling dragon blades! */
+  private spawnTwinDragonVortexEffect(range: number): void {
+    const g = this.scene.add.graphics();
+    g.setPosition(this.x, this.y - 20);
+    g.setDepth(this.y + 50);
+
+    g.lineStyle(18, 0x10b981, 0.5);
+    g.strokeCircle(0, 0, range * 0.72);
+    g.lineStyle(10, 0x22d3ee, 0.92);
+    g.strokeCircle(0, 0, range * 0.88);
+
+    // 6 swirling crescent blades around the ring
+    for (let i = 0; i < 6; i++) {
+      const a = (i / 6) * Math.PI * 2;
+      g.lineStyle(6, i % 2 === 0 ? 0x6ee7b7 : 0xecfeff, 0.95);
+      g.beginPath();
+      g.arc(0, 0, range * (0.58 + (i % 2) * 0.25), a, a + 0.75, false);
+      g.strokePath();
+    }
+
+    this.scene.tweens.add({
+      targets: g,
+      scaleX: 1.28,
+      scaleY: 1.28,
+      alpha: 0,
+      rotation: Math.PI * 1.4,
+      duration: 300,
+      ease: 'Cubic.easeOut',
+      onComplete: () => g.destroy(),
+    });
+  }
+
+  /** Tier 3 E-Skill VFX Stage 1: Radiant Golden-Cyan Dragon Ascension Vortex! */
+  private spawnDragonAscensionEffect(range: number): void {
+    const g = this.scene.add.graphics();
+    g.setPosition(this.x, this.y - 24);
+    g.setDepth(this.y + 55);
+
+    g.lineStyle(22, 0x0284c7, 0.55);
+    g.strokeCircle(0, 0, range * 0.75);
+    g.lineStyle(12, 0xfbbf24, 0.92);
+    g.strokeCircle(0, 0, range * 0.9);
+    g.lineStyle(6, 0x67e8f9, 1);
+    g.strokeCircle(0, 0, range * 0.6);
+
+    // Swirling golden-white dragon crescents
+    for (let i = 0; i < 8; i++) {
+      const a = (i / 8) * Math.PI * 2;
+      g.lineStyle(6, i % 2 === 0 ? 0xfde047 : 0xffffff, 0.98);
+      g.beginPath();
+      g.arc(0, 0, range * (0.48 + (i % 2) * 0.34), a, a + 0.62, false);
+      g.strokePath();
+    }
+
+    this.scene.tweens.add({
+      targets: g,
+      scaleX: 1.35,
+      scaleY: 1.35,
+      alpha: 0,
+      rotation: Math.PI * 1.65,
+      duration: 340,
+      ease: 'Cubic.easeOut',
+      onComplete: () => g.destroy(),
+    });
+  }
+
+  /** Tier 3 E-Skill VFX Stage 2: 8 Sky-to-Ground Azure-Gold Lightning Pillars! */
+  private spawnDragonAscensionLightning(range: number): void {
+    const g = this.scene.add.graphics();
+    g.setDepth(this.y + 62);
+
+    const pillarCount = 8;
+    for (let i = 0; i < pillarCount; i++) {
+      const a = (i / pillarCount) * Math.PI * 2;
+      const lx = this.x + Math.cos(a) * (range * 0.72);
+      const ly = this.y + Math.sin(a) * (range * 0.52);
+
+      // Vertical sky lightning bolt
+      g.lineStyle(10, i % 2 === 0 ? 0x38bdf8 : 0xfbbf24, 0.65);
+      g.lineBetween(lx + Phaser.Math.Between(-14, 14), ly - 220, lx, ly);
+      g.lineStyle(4, 0xffffff, 1);
+      g.lineBetween(lx + Phaser.Math.Between(-8, 8), ly - 220, lx, ly);
+
+      // Impact ring at base of each bolt
+      g.lineStyle(4, 0xfde047, 0.9);
+      g.strokeEllipse(lx, ly, 44, 22);
+    }
+
+    this.scene.tweens.add({
+      targets: g,
+      alpha: 0,
+      duration: 280,
+      ease: 'Cubic.easeOut',
+      onComplete: () => g.destroy(),
     });
   }
 
