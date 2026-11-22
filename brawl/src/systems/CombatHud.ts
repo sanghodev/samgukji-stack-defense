@@ -105,10 +105,10 @@ export class CombatHud implements IGameSystem {
       .setDepth(DEPTH_LAYERS.HUD + 1);
 
     scene.add
-      .text(bx + badgeW / 2, 47, 'STEP 2 · COMBAT FEEL LAB', {
+      .text(bx + badgeW / 2, 47, 'STEP 3 · MAYHEM PHYSICS', {
         fontFamily: 'Consolas, Menlo, monospace',
         fontSize: '10px',
-        color: '#7dd3fc',
+        color: '#fb923c',
       })
       .setOrigin(0.5)
       .setDepth(DEPTH_LAYERS.HUD + 1);
@@ -128,7 +128,7 @@ export class CombatHud implements IGameSystem {
       .setVisible(false);
 
     // 5. Bottom-right controls legend
-    const hintW = 472;
+    const hintW = 556;
     const hintX = GAME_WIDTH - hintW - 14;
     const hintBg = scene.add.graphics().setDepth(DEPTH_LAYERS.HUD);
     hintBg.fillStyle(0x0b101b, 0.78);
@@ -140,7 +140,7 @@ export class CombatHud implements IGameSystem {
       .text(
         hintX + hintW / 2,
         GAME_HEIGHT - 22,
-        'WASD/방향키: 이동 · Z: 3연격 · X: 강공격 · R: 재시작 · F2: 전투패널 · F3: 디버그',
+        'WASD/방향키: 이동 · Z: 3연격 · X: 강공격 · SPACE: 잡기/던지기 · R: 재시작 · F2: 디버그패널',
         {
           fontFamily: 'Malgun Gothic, Apple SD Gothic Neo, sans-serif',
           fontSize: '11px',

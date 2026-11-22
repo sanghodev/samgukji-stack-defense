@@ -8,6 +8,7 @@ import {
   MeleeTargetHurtbox,
   stepAirbornePhysics,
 } from '../core/CombatMath';
+import type { ChainReactionTier } from '../core/MayhemPhysics';
 import {
   clampToArena,
   getDepthOrder,
@@ -53,10 +54,13 @@ export class Bandit {
   public readonly id: string;
   public readonly slotIndex: number;
   public readonly collisionRadius = BANDIT_COMBAT_CONFIG.collisionRadius;
+  public readonly mass = 1.0;
   public readonly container: Phaser.GameObjects.Container;
 
   public x: number;
   public y: number;
+  public prevX: number;
+  public prevY: number;
   public vx = 0;
   public vy = 0;
   public elevationZ = 0;
@@ -65,6 +69,12 @@ export class Bandit {
   public maxHp: number;
   public state: BanditState = 'IDLE';
   public readyForRemoval = false;
+
+  // Step 3 Mayhem Physics: domino chain & slipping state
+  public chainDepth = 0;
+  public chainCooldownMs = 0;
+  public slipImmunityMs = 0;
+  public isSlipping = false;
 
   private readonly scene: Phaser.Scene;
   private readonly tuning: CombatTuning;
@@ -103,6 +113,8 @@ export class Bandit {
     this.slotIndex = slotIndex;
     this.x = spawnX;
     this.y = spawnY;
+    this.prevX = spawnX;
+    this.prevY = spawnY;
     this.tuning = tuning;
     this.callbacks = callbacks;
     this.maxHp = tuning.enemyMaxHp;
@@ -175,6 +187,27 @@ export class Bandit {
     );
   }
 
+  public get groundSpeed(): number {
+    return Math.hypot(this.vx, this.vy / PERSPECTIVE_CONFIG.verticalMoveRatio);
+  }
+
+  /** True when this bandit is flying fast enough to bowl into other bandits or barrels! */
+  public get isChainProjectile(): boolean {
+    return (
+      (this.state === 'KNOCKBACK' || this.state === 'HURT' || this.state === 'DEFEATED') &&
+      this.groundSpeed >= 130
+    );
+  }
+
+  public get canSlipNow(): boolean {
+    return (
+      this.state === 'APPROACH' &&
+      this.slipImmunityMs <= 0 &&
+      this.elevationZ <= 0 &&
+      !this.isSlipping
+    );
+  }
+
   public getHurtbox(): MeleeTargetHurtbox {
     return {
       id: this.id,
@@ -201,6 +234,8 @@ export class Bandit {
 
     coordinator.releaseAttackToken(this.id);
     this.telegraphText.setVisible(false);
+    this.isSlipping = false;
+    this.chainDepth = 0;
 
     const dmg = Math.max(1, Math.round(hit.damage));
     this.hp = Math.max(0, this.hp - dmg);
@@ -244,6 +279,92 @@ export class Bandit {
     return true;
   }
 
+  /**
+   * Receives domino knockback transfer from another launched bandit.
+   */
+  public applyChainImpulse(
+    tier: ChainReactionTier,
+    vx: number,
+    vy: number,
+    launchVz: number,
+    damage: number,
+    nextChainDepth: number,
+    coordinator: CombatCoordinator,
+  ): boolean {
+    if (!this.isVulnerable || this.chainCooldownMs > 0 || tier === 'NONE') {
+      return false;
+    }
+
+    coordinator.releaseAttackToken(this.id);
+    this.telegraphText.setVisible(false);
+    this.isSlipping = false;
+    this.chainDepth = nextChainDepth;
+    this.chainCooldownMs = 260;
+    this.flashTimerMs = 85;
+
+    this.hp = Math.max(0, this.hp - Math.max(1, Math.round(damage)));
+    this.updateHpBar();
+
+    this.vx = vx;
+    this.vy = vy;
+    this.tumbleSpinDir = vx >= 0 ? 1 : -1;
+    if (Math.abs(vx) > 8) this.facingDirX = -Math.sign(vx);
+
+    if (this.hp <= 0) {
+      this.enterDefeated(Math.max(190, launchVz));
+      return true;
+    }
+
+    if (tier === 'LAUNCHED' || tier === 'KNOCKDOWN') {
+      this.state = 'KNOCKBACK';
+      this.vz = Math.max(165, launchVz);
+      this.elevationZ = Math.max(this.elevationZ, 4);
+      this.stateTimerMs = 880;
+      this.reactionText.setText(tier === 'LAUNCHED' ? '도미노!!' : '으악!');
+      this.reactionText.setColor('#fb923c');
+      this.reactionText.setVisible(true);
+    } else {
+      this.state = 'HURT';
+      this.stateTimerMs = tier === 'PUSHED' ? 300 : 220;
+      this.reactionText.setText(tier === 'PUSHED' ? '어어!' : '헉!');
+      this.reactionText.setColor('#fde047');
+      this.reactionText.setVisible(true);
+    }
+
+    return true;
+  }
+
+  /**
+   * Comedic surface hazard slip (water puddle, spilled food, banana peel).
+   */
+  public triggerSlip(coordinator: CombatCoordinator): boolean {
+    if (!this.canSlipNow) return false;
+
+    coordinator.releaseAttackToken(this.id);
+    this.telegraphText.setVisible(false);
+    this.isSlipping = true;
+    this.slipImmunityMs = 2400;
+
+    // Feet shoot forward along current run direction, body flips backward!
+    const spd = Math.max(165, this.groundSpeed * 1.45);
+    const len = Math.hypot(this.vx, this.vy) || 1;
+    const nx = this.vx / len;
+    const ny = this.vy / len;
+
+    this.vx = nx * spd;
+    this.vy = ny * spd;
+    this.vz = 155;
+    this.elevationZ = 5;
+    this.tumbleSpinDir = nx >= 0 ? -1 : 1; // Backward comic flip!
+    this.state = 'KNOCKBACK';
+    this.stateTimerMs = 760;
+
+    this.reactionText.setText('미끄덩!');
+    this.reactionText.setColor('#38bdf8');
+    this.reactionText.setVisible(true);
+    return true;
+  }
+
   public update(
     deltaMs: number,
     playerX: number,
@@ -254,12 +375,20 @@ export class Bandit {
     resolveProps: (x: number, y: number, radius: number) => Point2D,
   ): void {
     const dt = Math.min(deltaMs, 50) * 0.001;
+    this.prevX = this.x;
+    this.prevY = this.y;
 
     if (this.flashTimerMs > 0) {
       this.flashTimerMs = Math.max(0, this.flashTimerMs - deltaMs);
     }
     if (this.personalAttackCooldownMs > 0) {
       this.personalAttackCooldownMs = Math.max(0, this.personalAttackCooldownMs - deltaMs);
+    }
+    if (this.chainCooldownMs > 0) {
+      this.chainCooldownMs = Math.max(0, this.chainCooldownMs - deltaMs);
+    }
+    if (this.slipImmunityMs > 0) {
+      this.slipImmunityMs = Math.max(0, this.slipImmunityMs - deltaMs);
     }
 
     // Step 2.5D knockback + gravity physics for airborne/staggered/defeated states

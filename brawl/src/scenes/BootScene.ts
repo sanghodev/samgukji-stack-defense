@@ -59,5 +59,30 @@ export class BootScene extends Phaser.Scene {
     petal.fillRect(3, 2, 2, 1);
     petal.generateTexture('petal_particle', 8, 6);
     petal.destroy();
+
+    // Step 3 Debris textures (wood splinter, ceramic shard, water droplet, fruit piece)
+    const wood = this.make.graphics({ x: 0, y: 0 }, false);
+    wood.fillStyle(0xffffff, 1);
+    wood.fillRect(0, 1, 10, 3);
+    wood.generateTexture('debris_wood', 10, 5);
+    wood.destroy();
+
+    const ceramic = this.make.graphics({ x: 0, y: 0 }, false);
+    ceramic.fillStyle(0xffffff, 1);
+    ceramic.fillTriangle(0, 6, 4, 0, 7, 5);
+    ceramic.generateTexture('debris_ceramic', 8, 7);
+    ceramic.destroy();
+
+    const water = this.make.graphics({ x: 0, y: 0 }, false);
+    water.fillStyle(0xffffff, 1);
+    water.fillCircle(3, 3, 3);
+    water.generateTexture('debris_water', 6, 6);
+    water.destroy();
+
+    const fruit = this.make.graphics({ x: 0, y: 0 }, false);
+    fruit.fillStyle(0xffffff, 1);
+    fruit.fillCircle(4, 4, 4);
+    fruit.generateTexture('debris_fruit', 8, 8);
+    fruit.destroy();
   }
 }

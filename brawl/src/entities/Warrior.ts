@@ -12,6 +12,8 @@ import {
 } from '../core/Perspective';
 import { MoveInputState } from '../systems/InputSystem';
 
+import type { EnvironmentalObject } from './EnvironmentalObject';
+
 const DIR_LABELS = ['E', 'SE', 'S', 'SW', 'W', 'NW', 'N', 'NE'] as const;
 export type FacingDirection = (typeof DIR_LABELS)[number];
 
@@ -41,10 +43,8 @@ export interface WarriorCombatCallbacks {
 
 /**
  * Playable chibi Zhao Yun (조운) warrior entity.
- * Preserves STEP 1 8-direction movement & 2.5D perspective scaling, and adds:
- * - Responsive 3-hit Basic Spear Combo (Z) with input buffering
- * - Powerful Heavy Spear Thrust (X) with anticipation & lunge
- * - Player health, damage recoil, brief invulnerability, and defeat state
+ * Preserves STEP 1 8-direction movement & 2.5D perspective scaling, STEP 2 Z/X combat,
+ * and adds STEP 3 object pickup, overhead carrying, aiming, throwing, and dropping.
  */
 export class Warrior {
   public readonly id = 'player_zhaoyun';
@@ -68,6 +68,9 @@ export class Warrior {
   public currentAttack: AttackSpec | null = null;
   public attackDirX = 0;
   public attackDirY = 1;
+
+  // Step 3: Currently carried environmental object (table, jar, fruit basket)
+  public carriedObject: EnvironmentalObject | null = null;
 
   private readonly scene: Phaser.Scene;
   private readonly tuning: CombatTuning;
@@ -139,11 +142,43 @@ export class Warrior {
     return this.attackPhase === 'ACTIVE' && this.currentAttack !== null;
   }
 
+  public get isCarrying(): boolean {
+    return this.carriedObject !== null && !this.carriedObject.isBroken;
+  }
+
+  public pickUpObject(obj: EnvironmentalObject): boolean {
+    if (this.isDefeated || this.isCarrying || this.isAttacking) return false;
+    if (!obj.pickUpBy(this.id)) return false;
+    this.carriedObject = obj;
+    this.carriedObject.syncToCarrier(this.x, this.y);
+    return true;
+  }
+
+  public throwCarriedObject(throwForce: number): EnvironmentalObject | null {
+    if (!this.carriedObject) return null;
+    const obj = this.carriedObject;
+    this.carriedObject = null;
+    const dirX = Math.cos(this.facingAngle);
+    const dirY = Math.sin(this.facingAngle);
+    obj.throwInDirection(dirX, dirY, throwForce);
+    return obj;
+  }
+
+  public dropCarriedObject(): void {
+    if (!this.carriedObject) return;
+    const obj = this.carriedObject;
+    this.carriedObject = null;
+    obj.dropAt(
+      this.x + Math.cos(this.facingAngle) * 26,
+      this.y + Math.sin(this.facingAngle) * 18,
+    );
+  }
+
   /**
    * Queues Z/X attacks even during Hit-Stop so combo input buffering never drops presses!
    */
   public bufferInput(input: MoveInputState): void {
-    if (this.isDefeated) return;
+    if (this.isDefeated || this.isCarrying) return;
     if (input.heavyAttackPressed) {
       this.bufferedAttack = 'HEAVY';
     } else if (input.lightAttackPressed) {
@@ -191,6 +226,7 @@ export class Warrior {
 
     if (this.hp <= 0) {
       this.isDefeated = true;
+      this.dropCarriedObject();
       this.cancelAttack();
       this.callbacks.onPlayerDefeated();
     }
@@ -198,6 +234,7 @@ export class Warrior {
   }
 
   public reset(spawnX: number, spawnY: number): void {
+    this.carriedObject = null;
     this.x = spawnX;
     this.y = spawnY;
     this.vx = 0;
@@ -251,19 +288,19 @@ export class Warrior {
     // Consume buffered attacks when idle or late in recovery
     this.stepAttackStateMachine(deltaMs, input);
 
-    // Movement during combat:
-    // - Full 8-direction movement preserved
-    // - Basic attacks gently reduce move speed; Heavy attacks restrict movement during active frames
+    // Movement during combat & carrying:
     const speedFactor = getDepthSpeedFactor(this.y);
     const attackMoveMul = this.currentAttack ? this.currentAttack.moveSpeedFactor : 1.0;
+    const carryMoveMul = this.carriedObject ? this.carriedObject.spec.carrySpeedFactor : 1.0;
 
-    const targetVx = input.x * PLAYER_CONFIG.baseMoveSpeed * speedFactor * attackMoveMul;
+    const targetVx = input.x * PLAYER_CONFIG.baseMoveSpeed * speedFactor * attackMoveMul * carryMoveMul;
     const targetVy =
       input.y *
       PLAYER_CONFIG.baseMoveSpeed *
       PERSPECTIVE_CONFIG.verticalMoveRatio *
       speedFactor *
-      attackMoveMul;
+      attackMoveMul *
+      carryMoveMul;
 
     const rate = input.isMoving ? PLAYER_CONFIG.accelRate : PLAYER_CONFIG.decelRate;
     const maxStep = rate * dt;
@@ -307,6 +344,15 @@ export class Warrior {
 
     this.updateAnimation(dt, deltaMs);
     this.syncTransform();
+
+    // Keep carried object cleanly attached overhead with matching depth order
+    if (this.carriedObject) {
+      if (this.carriedObject.isBroken) {
+        this.carriedObject = null;
+      } else {
+        this.carriedObject.syncToCarrier(this.x, this.y);
+      }
+    }
   }
 
   private stepAttackStateMachine(deltaMs: number, input: MoveInputState): void {

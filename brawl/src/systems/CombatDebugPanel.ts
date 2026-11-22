@@ -1,27 +1,39 @@
 import { CombatTuning } from '../config/combatConfig';
+import { EnvObjectKind, MayhemTuning } from '../config/mayhemConfig';
 import { IGameSystem } from './ModuleRegistry';
 
 export interface CombatDebugPanelActions {
   onSpawnBandit: () => void;
+  onSpawnBanditGroup: () => void;
   onClearEnemies: () => void;
+  onSpawnObject: (kind: EnvObjectKind) => void;
+  onSpawnPuddle: () => void;
+  onResetEnvironment: () => void;
+  onClearDebris: () => void;
   onResetRoom: () => void;
   onTuningChanged: () => void;
 }
 
 /**
  * Toggleable developer tuning panel (F2) rendered as a lightweight HTML drawer
- * outside the normal gameplay UI so combat feel can be tuned in real time.
+ * outside the normal gameplay UI so Step 2 combat & Step 3 mayhem physics can be tuned live.
  */
 export class CombatDebugPanel implements IGameSystem {
   public readonly id = 'combat-debug-panel';
 
   private readonly tuning: CombatTuning;
+  private readonly mayhem: MayhemTuning;
   private readonly actions: CombatDebugPanelActions;
   private root?: HTMLDivElement;
   private visible = false;
 
-  constructor(tuning: CombatTuning, actions: CombatDebugPanelActions) {
+  constructor(
+    tuning: CombatTuning,
+    mayhem: MayhemTuning,
+    actions: CombatDebugPanelActions,
+  ) {
     this.tuning = tuning;
+    this.mayhem = mayhem;
     this.actions = actions;
   }
 
@@ -34,10 +46,10 @@ export class CombatDebugPanel implements IGameSystem {
       'position: fixed',
       'top: 12px',
       'right: 12px',
-      'width: 288px',
+      'width: 306px',
       'max-height: calc(100vh - 24px)',
       'overflow-y: auto',
-      'background: rgba(11, 16, 27, 0.93)',
+      'background: rgba(11, 16, 27, 0.94)',
       'color: #e2e8f0',
       'border: 1px solid rgba(251, 191, 36, 0.65)',
       'border-radius: 8px',
@@ -45,7 +57,7 @@ export class CombatDebugPanel implements IGameSystem {
       'font-family: Consolas, Menlo, monospace',
       'font-size: 11px',
       'z-index: 9999',
-      'box-shadow: 0 10px 28px rgba(0,0,0,0.6)',
+      'box-shadow: 0 10px 28px rgba(0,0,0,0.65)',
       'display: none',
       'user-select: none',
     ].join(';');
@@ -54,7 +66,7 @@ export class CombatDebugPanel implements IGameSystem {
     header.style.cssText =
       'display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;padding-bottom:6px;border-bottom:1px solid rgba(148,163,184,0.25);';
     header.innerHTML =
-      '<strong style="color:#fde047;font-size:12px;">⚔ COMBAT DEBUG [F2]</strong>';
+      '<strong style="color:#fde047;font-size:12px;">⚔ COMBAT & MAYHEM DEBUG [F2]</strong>';
 
     const closeBtn = document.createElement('button');
     closeBtn.textContent = '✕';
@@ -64,7 +76,56 @@ export class CombatDebugPanel implements IGameSystem {
     header.appendChild(closeBtn);
     panel.appendChild(header);
 
-    // Sliders
+    // ===== STEP 3 MAYHEM PHYSICS TUNING =====
+    this.addSectionTitle(panel, 'MAYHEM PHYSICS (STEP 3)');
+
+    this.addSlider(panel, 'Throw Force', 280, 900, 20, () => this.mayhem.objectThrowForce, (v) => {
+      this.mayhem.objectThrowForce = v;
+    }, (v) => `${Math.round(v)}`);
+
+    this.addSlider(panel, 'Object Mass', 0.5, 2.5, 0.1, () => this.mayhem.objectMassMultiplier, (v) => {
+      this.mayhem.objectMassMultiplier = v;
+    }, (v) => `${v.toFixed(1)}x`);
+
+    this.addSlider(panel, 'Object Durability', 0.5, 3.0, 0.5, () => this.mayhem.objectDurabilityMultiplier, (v) => {
+      this.mayhem.objectDurabilityMultiplier = v;
+    }, (v) => `${v.toFixed(1)}x`);
+
+    this.addSlider(panel, 'Chain Transfer', 0.3, 1.3, 0.05, () => this.mayhem.knockbackTransferCoeff, (v) => {
+      this.mayhem.knockbackTransferCoeff = v;
+    }, (v) => `${v.toFixed(2)}`);
+
+    this.addSlider(panel, 'Chain Energy Min', 60, 280, 10, () => this.mayhem.collisionEnergyThreshold, (v) => {
+      this.mayhem.collisionEnergyThreshold = v;
+    }, (v) => `${Math.round(v)}`);
+
+    this.addSlider(panel, 'Max Chain Depth', 1, 8, 1, () => this.mayhem.maxChainDepth, (v) => {
+      this.mayhem.maxChainDepth = Math.round(v);
+    }, (v) => `${Math.round(v)}`);
+
+    this.addSlider(panel, 'Surface Friction', 0.4, 2.2, 0.1, () => this.mayhem.surfaceFriction, (v) => {
+      this.mayhem.surfaceFriction = v;
+    }, (v) => `${v.toFixed(1)}x`);
+
+    this.addSlider(panel, 'Slip Probability', 0, 1.0, 0.05, () => this.mayhem.slipProbability, (v) => {
+      this.mayhem.slipProbability = v;
+    }, (v) => `${Math.round(v * 100)}%`);
+
+    this.addSlider(panel, 'Puddle Duration', 4000, 30000, 1000, () => this.mayhem.puddleDurationMs, (v) => {
+      this.mayhem.puddleDurationMs = v;
+    }, (v) => `${(v / 1000).toFixed(0)}s`);
+
+    this.addSlider(panel, 'Particle Intensity', 0, 2.0, 0.1, () => this.mayhem.particleIntensity, (v) => {
+      this.mayhem.particleIntensity = v;
+    }, (v) => `${v.toFixed(1)}x`);
+
+    this.addSlider(panel, 'Env SFX Volume', 0, 1.0, 0.05, () => this.mayhem.envSfxVolume, (v) => {
+      this.mayhem.envSfxVolume = v;
+    }, (v) => `${Math.round(v * 100)}%`);
+
+    // ===== STEP 2 COMBAT TUNING =====
+    this.addSectionTitle(panel, 'COMBAT TUNING (STEP 2)');
+
     this.addSlider(panel, 'Player Damage', 0.4, 3.0, 0.1, () => this.tuning.playerDamageMultiplier, (v) => {
       this.tuning.playerDamageMultiplier = v;
     }, (v) => `${v.toFixed(1)}x`);
@@ -101,38 +162,59 @@ export class CombatDebugPanel implements IGameSystem {
       this.tuning.screenShakeIntensity = v;
     }, (v) => `${v.toFixed(1)}x`);
 
-    this.addSlider(panel, 'Sound Volume', 0, 1.0, 0.05, () => this.tuning.audioVolume, (v) => {
+    this.addSlider(panel, 'Combat SFX Vol', 0, 1.0, 0.05, () => this.tuning.audioVolume, (v) => {
       this.tuning.audioVolume = v;
     }, (v) => `${Math.round(v * 100)}%`);
 
-    this.addSlider(panel, 'Enemy Count', 1, 12, 1, () => this.tuning.enemyCount, (v) => {
+    this.addSlider(panel, 'Enemy Count', 1, 15, 1, () => this.tuning.enemyCount, (v) => {
       this.tuning.enemyCount = Math.round(v);
     }, (v) => `${Math.round(v)}`);
 
-    // Toggles
+    // ===== VISUALIZATION TOGGLES =====
+    this.addSectionTitle(panel, 'DEBUG OVERLAYS');
     const togglesWrap = document.createElement('div');
-    togglesWrap.style.cssText =
-      'margin-top:8px;padding-top:8px;border-top:1px solid rgba(148,163,184,0.25);display:flex;flex-direction:column;gap:5px;';
+    togglesWrap.style.cssText = 'display:flex;flex-direction:column;gap:4px;';
     this.addCheckbox(togglesWrap, 'Enable Screen Shake', () => this.tuning.screenShakeEnabled, (v) => {
       this.tuning.screenShakeEnabled = v;
     });
     this.addCheckbox(togglesWrap, 'Show Attack Hitboxes', () => this.tuning.showHitboxes, (v) => {
       this.tuning.showHitboxes = v;
     });
-    this.addCheckbox(togglesWrap, 'Show Ground / World Collisions', () => this.tuning.showGroundPositions, (v) => {
+    this.addCheckbox(togglesWrap, 'Show Object Collisions', () => this.mayhem.showObjectShapes, (v) => {
+      this.mayhem.showObjectShapes = v;
+    });
+    this.addCheckbox(togglesWrap, 'Show Actor Collisions', () => this.mayhem.showActorShapes, (v) => {
+      this.mayhem.showActorShapes = v;
       this.tuning.showGroundPositions = v;
+    });
+    this.addCheckbox(togglesWrap, 'Show Velocity Vectors', () => this.mayhem.showVelocityVectors, (v) => {
+      this.mayhem.showVelocityVectors = v;
+    });
+    this.addCheckbox(togglesWrap, 'Show World Coords', () => this.mayhem.showWorldCoords, (v) => {
+      this.mayhem.showWorldCoords = v;
+    });
+    this.addCheckbox(togglesWrap, 'Show Chain Counters', () => this.mayhem.showChainCounters, (v) => {
+      this.mayhem.showChainCounters = v;
     });
     panel.appendChild(togglesWrap);
 
-    // Action buttons
+    // ===== SPAWN & RESET BUTTONS =====
+    this.addSectionTitle(panel, 'SPAWN & RESET TOOLS');
     const btnRow = document.createElement('div');
-    btnRow.style.cssText =
-      'margin-top:10px;padding-top:8px;border-top:1px solid rgba(148,163,184,0.25);display:grid;grid-template-columns:1fr 1fr;gap:6px;';
+    btnRow.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;gap:5px;';
 
-    btnRow.appendChild(this.makeButton('+ Spawn Bandit', '#0369a1', () => this.actions.onSpawnBandit()));
+    btnRow.appendChild(this.makeButton('+ Table', '#92400e', () => this.actions.onSpawnObject('table')));
+    btnRow.appendChild(this.makeButton('+ Water Barrel', '#0284c7', () => this.actions.onSpawnObject('barrel_water')));
+    btnRow.appendChild(this.makeButton('+ Ceramic Jar', '#c2410c', () => this.actions.onSpawnObject('ceramic_jar')));
+    btnRow.appendChild(this.makeButton('+ Fruit Basket', '#15803d', () => this.actions.onSpawnObject('fruit_basket')));
+    btnRow.appendChild(this.makeButton('+ Puddle', '#0369a1', () => this.actions.onSpawnPuddle()));
+    btnRow.appendChild(this.makeButton('+ 1 Bandit', '#1d4ed8', () => this.actions.onSpawnBandit()));
+    btnRow.appendChild(this.makeButton('+ Group (5)', '#4338ca', () => this.actions.onSpawnBanditGroup()));
     btnRow.appendChild(this.makeButton('Clear Enemies', '#991b1b', () => this.actions.onClearEnemies()));
+    btnRow.appendChild(this.makeButton('Reset Env', '#b45309', () => this.actions.onResetEnvironment()));
+    btnRow.appendChild(this.makeButton('Clear Debris', '#475569', () => this.actions.onClearDebris()));
 
-    const resetBtn = this.makeButton('Reset Test Room (R)', '#b45309', () => this.actions.onResetRoom());
+    const resetBtn = this.makeButton('Reset Test Room (R)', '#d97706', () => this.actions.onResetRoom());
     resetBtn.style.gridColumn = 'span 2';
     btnRow.appendChild(resetBtn);
 
@@ -153,6 +235,14 @@ export class CombatDebugPanel implements IGameSystem {
     }
   }
 
+  private addSectionTitle(parent: HTMLElement, text: string): void {
+    const el = document.createElement('div');
+    el.textContent = text;
+    el.style.cssText =
+      'margin:8px 0 5px;padding-top:6px;border-top:1px solid rgba(148,163,184,0.22);color:#fb923c;font-weight:bold;font-size:10px;letter-spacing:0.06em;';
+    parent.appendChild(el);
+  }
+
   private addSlider(
     parent: HTMLElement,
     label: string,
@@ -164,10 +254,10 @@ export class CombatDebugPanel implements IGameSystem {
     format: (val: number) => string,
   ): void {
     const row = document.createElement('div');
-    row.style.cssText = 'margin-bottom:6px;';
+    row.style.cssText = 'margin-bottom:5px;';
 
     const top = document.createElement('div');
-    top.style.cssText = 'display:flex;justify-content:space-between;margin-bottom:2px;';
+    top.style.cssText = 'display:flex;justify-content:space-between;margin-bottom:1px;';
     const nameEl = document.createElement('span');
     nameEl.textContent = label;
     const valEl = document.createElement('span');
@@ -190,7 +280,6 @@ export class CombatDebugPanel implements IGameSystem {
       this.actions.onTuningChanged();
     };
     input.onkeydown = (e) => {
-      // Keep arrow keys on slider from moving the game accidentally while focused
       if (e.key === 'F2') return;
       e.stopPropagation();
     };
@@ -232,9 +321,9 @@ export class CombatDebugPanel implements IGameSystem {
       'color:#ffffff',
       'border:1px solid rgba(255,255,255,0.2)',
       'border-radius:5px',
-      'padding:6px 8px',
+      'padding:5px 6px',
       'font-family:Consolas, Menlo, monospace',
-      'font-size:11px',
+      'font-size:10px',
       'font-weight:bold',
       'cursor:pointer',
     ].join(';');

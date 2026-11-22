@@ -1,4 +1,5 @@
 import { CombatTuning } from '../config/combatConfig';
+import { MayhemTuning } from '../config/mayhemConfig';
 import { IAudioSystem, SystemContext } from './ModuleRegistry';
 
 type SoundChannel =
@@ -12,26 +13,44 @@ type SoundChannel =
   | 'footstep'
   | 'enemy_whoosh'
   | 'player_hurt'
-  | 'enemy_defeat';
+  | 'enemy_defeat'
+  | 'wood_pickup'
+  | 'wood_creak'
+  | 'table_throw'
+  | 'table_impact'
+  | 'table_shatter'
+  | 'barrel_roll'
+  | 'barrel_hit'
+  | 'barrel_break'
+  | 'ceramic_break'
+  | 'water_splash'
+  | 'slip'
+  | 'fall_thud'
+  | 'body_collision'
+  | 'chain_reaction'
+  | 'heavy_env_impact';
 
 /**
- * Procedural Web Audio API combat sound engine.
- * Designed for crisp 16-bit arcade feel with pitch variation, multi-layering,
- * master dynamic compression (zero clipping), and cooldown throttling.
+ * Procedural Web Audio API combat & environmental chaos sound engine.
+ * Features independent combat & environmental SFX gain channels, dynamic compression
+ * (zero clipping), per-channel cooldown throttling, pitch variation, and sound layering.
  */
 export class CombatAudioManager implements IAudioSystem {
   public readonly id = 'audio';
 
   private readonly tuning: CombatTuning;
+  private readonly mayhemTuning?: MayhemTuning;
   private ctx?: AudioContext;
-  private masterGain?: GainNode;
+  private combatGain?: GainNode;
+  private envGain?: GainNode;
   private compressor?: DynamicsCompressorNode;
   private noiseBuffer?: AudioBuffer;
   private readonly lastPlayedAt = new Map<SoundChannel, number>();
   private unlockBound?: () => void;
 
-  constructor(tuning: CombatTuning) {
+  constructor(tuning: CombatTuning, mayhemTuning?: MayhemTuning) {
     this.tuning = tuning;
+    this.mayhemTuning = mayhemTuning;
   }
 
   public init(_ctx: SystemContext): void {
@@ -56,10 +75,17 @@ export class CombatAudioManager implements IAudioSystem {
       this.compressor.attack.setValueAtTime(0.003, this.ctx.currentTime);
       this.compressor.release.setValueAtTime(0.12, this.ctx.currentTime);
 
-      this.masterGain = this.ctx.createGain();
-      this.masterGain.gain.setValueAtTime(this.tuning.audioVolume, this.ctx.currentTime);
+      this.combatGain = this.ctx.createGain();
+      this.combatGain.gain.setValueAtTime(this.tuning.audioVolume, this.ctx.currentTime);
+      this.combatGain.connect(this.compressor);
 
-      this.masterGain.connect(this.compressor);
+      this.envGain = this.ctx.createGain();
+      this.envGain.gain.setValueAtTime(
+        this.mayhemTuning?.envSfxVolume ?? this.tuning.audioVolume,
+        this.ctx.currentTime,
+      );
+      this.envGain.connect(this.compressor);
+
       this.compressor.connect(this.ctx.destination);
       this.noiseBuffer = this.createNoiseBuffer(this.ctx);
     }
@@ -70,137 +96,313 @@ export class CombatAudioManager implements IAudioSystem {
   }
 
   public syncVolume(): void {
-    if (!this.ctx || !this.masterGain) return;
-    this.masterGain.gain.setTargetAtTime(
-      Math.max(0, Math.min(1.5, this.tuning.audioVolume)),
-      this.ctx.currentTime,
-      0.015,
-    );
+    if (!this.ctx) return;
+    if (this.combatGain) {
+      this.combatGain.gain.setTargetAtTime(
+        Math.max(0, Math.min(1.5, this.tuning.audioVolume)),
+        this.ctx.currentTime,
+        0.015,
+      );
+    }
+    if (this.envGain) {
+      const ev = this.mayhemTuning ? this.mayhemTuning.envSfxVolume : this.tuning.audioVolume;
+      this.envGain.gain.setTargetAtTime(
+        Math.max(0, Math.min(1.5, ev)),
+        this.ctx.currentTime,
+        0.015,
+      );
+    }
   }
 
+  // ==================== STEP 2 COMBAT SOUNDS ====================
+
   public playLightWhoosh(): void {
-    if (!this.beginPlay('light_whoosh', 45)) return;
+    const dest = this.beginPlay('light_whoosh', 45, 'combat');
+    if (!dest) return;
     const now = this.ctx!.currentTime;
     const pitch = this.vary(1.0, 0.09);
-    this.playFilteredNoise(now, 0.095, 1600 * pitch, 650 * pitch, 2.2, 0.28);
-    this.playTone(now, 'triangle', 520 * pitch, 210 * pitch, 0.07, 0.1);
+    this.playFilteredNoise(dest, now, 0.095, 1600 * pitch, 650 * pitch, 2.2, 0.28);
+    this.playTone(dest, now, 'triangle', 520 * pitch, 210 * pitch, 0.07, 0.1);
   }
 
   public playStrongWhoosh(): void {
-    if (!this.beginPlay('strong_whoosh', 70)) return;
+    const dest = this.beginPlay('strong_whoosh', 70, 'combat');
+    if (!dest) return;
     const now = this.ctx!.currentTime;
     const pitch = this.vary(1.0, 0.07);
-    this.playFilteredNoise(now, 0.18, 1200 * pitch, 320 * pitch, 1.8, 0.44);
-    this.playTone(now, 'sawtooth', 360 * pitch, 110 * pitch, 0.14, 0.14);
+    this.playFilteredNoise(dest, now, 0.18, 1200 * pitch, 320 * pitch, 1.8, 0.44);
+    this.playTone(dest, now, 'sawtooth', 360 * pitch, 110 * pitch, 0.14, 0.14);
   }
 
   public playLightImpact(): void {
-    if (!this.beginPlay('light_impact', 30)) return;
+    const dest = this.beginPlay('light_impact', 30, 'combat');
+    if (!dest) return;
     const now = this.ctx!.currentTime;
     const pitch = this.vary(1.0, 0.08);
-    // Sharp initial slap transient
-    this.playFilteredNoise(now, 0.045, 2400 * pitch, 900 * pitch, 1.2, 0.45);
-    // Snappy body thump
-    this.playTone(now, 'triangle', 220 * pitch, 72 * pitch, 0.075, 0.42);
+    this.playFilteredNoise(dest, now, 0.045, 2400 * pitch, 900 * pitch, 1.2, 0.45);
+    this.playTone(dest, now, 'triangle', 220 * pitch, 72 * pitch, 0.075, 0.42);
   }
 
   public playComboFinisherImpact(): void {
-    if (!this.beginPlay('finisher_impact', 40)) return;
+    const dest = this.beginPlay('finisher_impact', 40, 'combat');
+    if (!dest) return;
     const now = this.ctx!.currentTime;
     const pitch = this.vary(1.0, 0.07);
-    // 1. Sharp metallic/air transient
-    this.playFilteredNoise(now, 0.07, 3200 * pitch, 700 * pitch, 1.4, 0.56);
-    // 2. Deep punchy body impact
-    this.playTone(now, 'sine', 190 * pitch, 48 * pitch, 0.14, 0.62);
-    // 3. Crisp spear ring accent
-    this.playTone(now + 0.008, 'triangle', 740 * pitch, 380 * pitch, 0.09, 0.18);
+    this.playFilteredNoise(dest, now, 0.07, 3200 * pitch, 700 * pitch, 1.4, 0.56);
+    this.playTone(dest, now, 'sine', 190 * pitch, 48 * pitch, 0.14, 0.62);
+    this.playTone(dest, now + 0.008, 'triangle', 740 * pitch, 380 * pitch, 0.09, 0.18);
   }
 
   public playHeavyImpact(): void {
-    if (!this.beginPlay('heavy_impact', 45)) return;
+    const dest = this.beginPlay('heavy_impact', 45, 'combat');
+    if (!dest) return;
     const now = this.ctx!.currentTime;
     const pitch = this.vary(1.0, 0.06);
-    // 1. Sharp crack transient
-    this.playFilteredNoise(now, 0.11, 3600 * pitch, 500 * pitch, 1.1, 0.72);
-    // 2. Deep sub-bass body impact
-    this.playTone(now, 'sine', 160 * pitch, 36 * pitch, 0.21, 0.85);
-    // 3. Mid-range crunch punch
-    this.playTone(now, 'sawtooth', 260 * pitch, 68 * pitch, 0.12, 0.28);
-    // 4. Metallic spear shimmer
-    this.playTone(now + 0.01, 'triangle', 920 * pitch, 460 * pitch, 0.13, 0.22);
+    this.playFilteredNoise(dest, now, 0.11, 3600 * pitch, 500 * pitch, 1.1, 0.72);
+    this.playTone(dest, now, 'sine', 160 * pitch, 36 * pitch, 0.21, 0.85);
+    this.playTone(dest, now, 'sawtooth', 260 * pitch, 68 * pitch, 0.12, 0.28);
+    this.playTone(dest, now + 0.01, 'triangle', 920 * pitch, 460 * pitch, 0.13, 0.22);
   }
 
   public playEnemyHurt(heavy = false): void {
-    if (!this.beginPlay('enemy_hurt', 45)) return;
+    const dest = this.beginPlay('enemy_hurt', 45, 'combat');
+    if (!dest) return;
     const now = this.ctx!.currentTime;
     const pitch = this.vary(1.0, 0.12);
     if (heavy) {
-      // Cartoon high-to-low knockback yelp
-      this.playTone(now + 0.015, 'square', 560 * pitch, 210 * pitch, 0.16, 0.16);
-      this.playTone(now + 0.02, 'triangle', 420 * pitch, 160 * pitch, 0.17, 0.2);
+      this.playTone(dest, now + 0.015, 'square', 560 * pitch, 210 * pitch, 0.16, 0.16);
+      this.playTone(dest, now + 0.02, 'triangle', 420 * pitch, 160 * pitch, 0.17, 0.2);
     } else {
-      // Quick comic grunt
-      this.playTone(now + 0.01, 'square', 380 * pitch, 230 * pitch, 0.08, 0.12);
+      this.playTone(dest, now + 0.01, 'square', 380 * pitch, 230 * pitch, 0.08, 0.12);
     }
   }
 
   public playKnockdownLanding(): void {
-    if (!this.beginPlay('knockdown_land', 50)) return;
+    const dest = this.beginPlay('knockdown_land', 50, 'combat');
+    if (!dest) return;
     const now = this.ctx!.currentTime;
     const pitch = this.vary(1.0, 0.08);
-    // Dull cobblestone slam
-    this.playTone(now, 'sine', 125 * pitch, 42 * pitch, 0.13, 0.52);
-    // Short dusty scrape
-    this.playFilteredNoise(now, 0.085, 850 * pitch, 280 * pitch, 1.1, 0.3);
+    this.playTone(dest, now, 'sine', 125 * pitch, 42 * pitch, 0.13, 0.52);
+    this.playFilteredNoise(dest, now, 0.085, 850 * pitch, 280 * pitch, 1.1, 0.3);
   }
 
   public playFootstep(): void {
-    if (!this.beginPlay('footstep', 135)) return;
+    const dest = this.beginPlay('footstep', 135, 'combat');
+    if (!dest) return;
     const now = this.ctx!.currentTime;
     const pitch = this.vary(1.0, 0.12);
-    this.playFilteredNoise(now, 0.032, 950 * pitch, 420 * pitch, 1.8, 0.1);
+    this.playFilteredNoise(dest, now, 0.032, 950 * pitch, 420 * pitch, 1.8, 0.1);
   }
 
   public playEnemyWhoosh(): void {
-    if (!this.beginPlay('enemy_whoosh', 90)) return;
+    const dest = this.beginPlay('enemy_whoosh', 90, 'combat');
+    if (!dest) return;
     const now = this.ctx!.currentTime;
     const pitch = this.vary(1.0, 0.1);
-    this.playFilteredNoise(now, 0.11, 780 * pitch, 260 * pitch, 1.6, 0.22);
+    this.playFilteredNoise(dest, now, 0.11, 780 * pitch, 260 * pitch, 1.6, 0.22);
   }
 
   public playPlayerHurt(): void {
-    if (!this.beginPlay('player_hurt', 110)) return;
+    const dest = this.beginPlay('player_hurt', 110, 'combat');
+    if (!dest) return;
     const now = this.ctx!.currentTime;
     const pitch = this.vary(1.0, 0.06);
-    // Armored clang + low thud
-    this.playTone(now, 'sawtooth', 190 * pitch, 65 * pitch, 0.14, 0.45);
-    this.playTone(now, 'square', 620 * pitch, 290 * pitch, 0.08, 0.18);
-    this.playFilteredNoise(now, 0.06, 1800, 600, 1.5, 0.25);
+    this.playTone(dest, now, 'sawtooth', 190 * pitch, 65 * pitch, 0.14, 0.45);
+    this.playTone(dest, now, 'square', 620 * pitch, 290 * pitch, 0.08, 0.18);
+    this.playFilteredNoise(dest, now, 0.06, 1800, 600, 1.5, 0.25);
   }
 
   public playEnemyDefeat(): void {
-    if (!this.beginPlay('enemy_defeat', 70)) return;
+    const dest = this.beginPlay('enemy_defeat', 70, 'combat');
+    if (!dest) return;
     const now = this.ctx!.currentTime;
-    // Crisp 16-bit arcade KO fanfare chirp
-    this.playTone(now, 'triangle', 523.25, 523.25, 0.075, 0.24);
-    this.playTone(now + 0.065, 'triangle', 659.25, 659.25, 0.08, 0.26);
-    this.playTone(now + 0.13, 'triangle', 783.99, 1046.5, 0.14, 0.28);
+    this.playTone(dest, now, 'triangle', 523.25, 523.25, 0.075, 0.24);
+    this.playTone(dest, now + 0.065, 'triangle', 659.25, 659.25, 0.08, 0.26);
+    this.playTone(dest, now + 0.13, 'triangle', 783.99, 1046.5, 0.14, 0.28);
   }
 
-  private beginPlay(channel: SoundChannel, cooldownMs: number): boolean {
-    if (this.tuning.audioVolume <= 0.001) return false;
+  // ==================== STEP 3 ENVIRONMENTAL CHAOS SOUNDS ====================
+
+  public playWoodPickup(): void {
+    const dest = this.beginPlay('wood_pickup', 70, 'env');
+    if (!dest) return;
+    const now = this.ctx!.currentTime;
+    const p = this.vary(1.0, 0.08);
+    this.playTone(dest, now, 'triangle', 165 * p, 275 * p, 0.09, 0.36);
+    this.playFilteredNoise(dest, now + 0.015, 0.06, 900 * p, 450 * p, 2.5, 0.22);
+  }
+
+  public playWoodCreak(): void {
+    const dest = this.beginPlay('wood_creak', 120, 'env');
+    if (!dest) return;
+    const now = this.ctx!.currentTime;
+    const p = this.vary(1.0, 0.1);
+    this.playTone(dest, now, 'sawtooth', 240 * p, 195 * p, 0.11, 0.12);
+  }
+
+  public playHeavyTableThrow(): void {
+    const dest = this.beginPlay('table_throw', 80, 'env');
+    if (!dest) return;
+    const now = this.ctx!.currentTime;
+    const p = this.vary(1.0, 0.07);
+    this.playFilteredNoise(dest, now, 0.2, 950 * p, 220 * p, 1.4, 0.5);
+    this.playTone(dest, now, 'triangle', 260 * p, 92 * p, 0.16, 0.34);
+  }
+
+  public playTableImpact(): void {
+    const dest = this.beginPlay('table_impact', 40, 'env');
+    if (!dest) return;
+    const now = this.ctx!.currentTime;
+    const p = this.vary(1.0, 0.07);
+    // Layered woody crack + heavy body thump
+    this.playFilteredNoise(dest, now, 0.09, 2100 * p, 420 * p, 1.3, 0.65);
+    this.playTone(dest, now, 'sine', 155 * p, 42 * p, 0.18, 0.78);
+    this.playTone(dest, now + 0.01, 'square', 310 * p, 120 * p, 0.08, 0.2);
+  }
+
+  public playTableShatter(): void {
+    const dest = this.beginPlay('table_shatter', 60, 'env');
+    if (!dest) return;
+    const now = this.ctx!.currentTime;
+    const p = this.vary(1.0, 0.06);
+    // Multi-layered wood splintering explosion
+    this.playTone(dest, now, 'sine', 140 * p, 34 * p, 0.22, 0.85);
+    this.playFilteredNoise(dest, now, 0.16, 2600 * p, 380 * p, 1.0, 0.78);
+    this.playFilteredNoise(dest, now + 0.045, 0.12, 1800 * p, 520 * p, 1.6, 0.45);
+    this.playTone(dest, now + 0.02, 'sawtooth', 420 * p, 110 * p, 0.1, 0.22);
+  }
+
+  public playBarrelRoll(): void {
+    const dest = this.beginPlay('barrel_roll', 160, 'env');
+    if (!dest) return;
+    const now = this.ctx!.currentTime;
+    const p = this.vary(1.0, 0.1);
+    this.playTone(dest, now, 'triangle', 105 * p, 82 * p, 0.12, 0.24);
+    this.playFilteredNoise(dest, now, 0.1, 420 * p, 220 * p, 2.0, 0.16);
+  }
+
+  public playBarrelCollision(): void {
+    const dest = this.beginPlay('barrel_hit', 50, 'env');
+    if (!dest) return;
+    const now = this.ctx!.currentTime;
+    const p = this.vary(1.0, 0.08);
+    // Hollow wooden drum thud
+    this.playTone(dest, now, 'sine', 190 * p, 64 * p, 0.15, 0.62);
+    this.playFilteredNoise(dest, now, 0.07, 1100 * p, 350 * p, 1.5, 0.4);
+  }
+
+  public playBarrelBreak(hasWater: boolean): void {
+    const dest = this.beginPlay('barrel_break', 60, 'env');
+    if (!dest) return;
+    const now = this.ctx!.currentTime;
+    const p = this.vary(1.0, 0.07);
+    this.playTone(dest, now, 'sine', 150 * p, 40 * p, 0.19, 0.72);
+    this.playFilteredNoise(dest, now, 0.14, 2100 * p, 420 * p, 1.2, 0.65);
+    if (hasWater) {
+      this.playWaterSplash();
+    }
+  }
+
+  public playCeramicBreak(): void {
+    const dest = this.beginPlay('ceramic_break', 50, 'env');
+    if (!dest) return;
+    const now = this.ctx!.currentTime;
+    const p = this.vary(1.0, 0.1);
+    // Crisp high-frequency porcelain/terracotta shatter (distinct from wood!)
+    this.playFilteredNoise(dest, now, 0.11, 5200 * p, 1800 * p, 1.8, 0.62);
+    this.playTone(dest, now, 'triangle', 1850 * p, 920 * p, 0.07, 0.26);
+    this.playTone(dest, now + 0.025, 'sine', 2400 * p, 1450 * p, 0.06, 0.22);
+    this.playTone(dest, now + 0.055, 'triangle', 1420 * p, 780 * p, 0.06, 0.16);
+  }
+
+  public playWaterSplash(): void {
+    const dest = this.beginPlay('water_splash', 60, 'env');
+    if (!dest) return;
+    const now = this.ctx!.currentTime;
+    const p = this.vary(1.0, 0.09);
+    // Lush sweeping liquid splash
+    this.playFilteredNoise(dest, now + 0.01, 0.24, 2400 * p, 480 * p, 0.9, 0.56);
+    this.playTone(dest, now + 0.02, 'sine', 380 * p, 640 * p, 0.08, 0.16);
+    this.playTone(dest, now + 0.08, 'sine', 520 * p, 260 * p, 0.12, 0.14);
+  }
+
+  public playSlip(): void {
+    const dest = this.beginPlay('slip', 90, 'env');
+    if (!dest) return;
+    const now = this.ctx!.currentTime;
+    const p = this.vary(1.0, 0.1);
+    // Classic hilarious cartoon rising-then-falling slide whistle!
+    this.playTone(dest, now, 'sine', 340 * p, 1180 * p, 0.14, 0.34);
+    this.playTone(dest, now + 0.13, 'triangle', 1120 * p, 240 * p, 0.13, 0.24);
+  }
+
+  public playFallThud(): void {
+    const dest = this.beginPlay('fall_thud', 60, 'env');
+    if (!dest) return;
+    const now = this.ctx!.currentTime;
+    const p = this.vary(1.0, 0.08);
+    this.playTone(dest, now, 'sine', 115 * p, 38 * p, 0.15, 0.56);
+    this.playFilteredNoise(dest, now, 0.08, 650 * p, 240 * p, 1.2, 0.28);
+  }
+
+  public playBodyCollision(): void {
+    const dest = this.beginPlay('body_collision', 40, 'env');
+    if (!dest) return;
+    const now = this.ctx!.currentTime;
+    const p = this.vary(1.0, 0.09);
+    this.playTone(dest, now, 'sine', 180 * p, 58 * p, 0.11, 0.58);
+    this.playFilteredNoise(dest, now, 0.055, 1400 * p, 480 * p, 1.3, 0.38);
+  }
+
+  public playChainReaction(chainDepth: number): void {
+    const dest = this.beginPlay('chain_reaction', 45, 'env');
+    if (!dest) return;
+    const now = this.ctx!.currentTime;
+    // Escalating bowling-pin pitch per chain step!
+    const stepMul = 1 + Math.min(4, Math.max(0, chainDepth - 1)) * 0.16;
+    this.playTone(dest, now, 'sine', 165 * stepMul, 52 * stepMul, 0.13, 0.62);
+    this.playTone(dest, now + 0.01, 'triangle', 440 * stepMul, 660 * stepMul, 0.09, 0.24);
+    this.playFilteredNoise(dest, now, 0.07, 1900 * stepMul, 520, 1.2, 0.42);
+  }
+
+  public playHeavyEnvImpact(): void {
+    const dest = this.beginPlay('heavy_env_impact', 60, 'env');
+    if (!dest) return;
+    const now = this.ctx!.currentTime;
+    const p = this.vary(1.0, 0.06);
+    this.playTone(dest, now, 'sine', 135 * p, 34 * p, 0.22, 0.85);
+    this.playFilteredNoise(dest, now, 0.14, 2400 * p, 360 * p, 1.0, 0.68);
+  }
+
+  // ==================== INTERNAL AUDIO ENGINE ====================
+
+  private beginPlay(
+    channel: SoundChannel,
+    cooldownMs: number,
+    bus: 'combat' | 'env',
+  ): GainNode | null {
+    const vol =
+      bus === 'env'
+        ? this.mayhemTuning?.envSfxVolume ?? this.tuning.audioVolume
+        : this.tuning.audioVolume;
+    if (vol <= 0.001) return null;
+
     this.ensureUnlocked();
-    if (!this.ctx || !this.masterGain || this.ctx.state !== 'running') return false;
+    if (!this.ctx || this.ctx.state !== 'running') return null;
+
+    const dest = bus === 'env' ? this.envGain : this.combatGain;
+    if (!dest) return null;
 
     const nowMs = performance.now();
     const last = this.lastPlayedAt.get(channel) ?? -Infinity;
-    if (nowMs - last < cooldownMs) return false;
+    if (nowMs - last < cooldownMs) return null;
     this.lastPlayedAt.set(channel, nowMs);
     this.syncVolume();
-    return true;
+    return dest;
   }
 
   private playTone(
+    dest: GainNode,
     startTime: number,
     type: OscillatorType,
     startFreq: number,
@@ -208,7 +410,7 @@ export class CombatAudioManager implements IAudioSystem {
     durationSec: number,
     peakGain: number,
   ): void {
-    if (!this.ctx || !this.masterGain) return;
+    if (!this.ctx) return;
     const osc = this.ctx.createOscillator();
     const gain = this.ctx.createGain();
     osc.type = type;
@@ -220,12 +422,13 @@ export class CombatAudioManager implements IAudioSystem {
     gain.gain.exponentialRampToValueAtTime(0.0001, startTime + durationSec);
 
     osc.connect(gain);
-    gain.connect(this.masterGain);
+    gain.connect(dest);
     osc.start(startTime);
     osc.stop(startTime + durationSec + 0.01);
   }
 
   private playFilteredNoise(
+    dest: GainNode,
     startTime: number,
     durationSec: number,
     startFreq: number,
@@ -233,7 +436,7 @@ export class CombatAudioManager implements IAudioSystem {
     q: number,
     peakGain: number,
   ): void {
-    if (!this.ctx || !this.masterGain || !this.noiseBuffer) return;
+    if (!this.ctx || !this.noiseBuffer) return;
     const src = this.ctx.createBufferSource();
     src.buffer = this.noiseBuffer;
 
@@ -250,7 +453,7 @@ export class CombatAudioManager implements IAudioSystem {
 
     src.connect(filter);
     filter.connect(gain);
-    gain.connect(this.masterGain);
+    gain.connect(dest);
     src.start(startTime);
     src.stop(startTime + durationSec + 0.01);
   }
@@ -279,7 +482,8 @@ export class CombatAudioManager implements IAudioSystem {
       void this.ctx.close();
       this.ctx = undefined;
     }
-    this.masterGain = undefined;
+    this.combatGain = undefined;
+    this.envGain = undefined;
     this.compressor = undefined;
     this.noiseBuffer = undefined;
   }
