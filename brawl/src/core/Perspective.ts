@@ -12,7 +12,7 @@ export interface Point2D {
 }
 
 /**
- * Normalized depth ratio in [0, 1], where 0 is the rear of the arena
+ * Normalized depth ratio in [0, 1], where 0 is the far rear near the castle gate
  * and 1 is the front edge closest to the viewer.
  */
 export function getDepthRatio(y: number): number {
@@ -23,27 +23,30 @@ export function getDepthRatio(y: number): number {
 
 /**
  * Perspective scale factor for sprites & shadows at a given world Y.
+ * Uses a gentle perspective curve so distant shrinkage feels natural and deep.
  */
 export function getPerspectiveScale(y: number): number {
   const t = getDepthRatio(y);
-  return Phaser.Math.Linear(PERSPECTIVE_CONFIG.minScale, PERSPECTIVE_CONFIG.maxScale, t);
+  const curved = Math.pow(t, 1.12);
+  return Phaser.Math.Linear(PERSPECTIVE_CONFIG.minScale, PERSPECTIVE_CONFIG.maxScale, curved);
 }
 
 /**
- * Perspective speed factor so moving across the distant back edge covers
- * appropriate visual distance compared to the foreground.
+ * Perspective speed factor so moving across the distant castle plaza covers
+ * realistic 3D distance compared to the foreground.
  */
 export function getDepthSpeedFactor(y: number): number {
   const t = getDepthRatio(y);
+  const curved = Math.pow(t, 1.12);
   return Phaser.Math.Linear(
     PERSPECTIVE_CONFIG.minSpeedFactor,
     PERSPECTIVE_CONFIG.maxSpeedFactor,
-    t,
+    curved,
   );
 }
 
 /**
- * Left and right playable X limits at a given Y along the arena trapezoid.
+ * Left and right playable X limits at a given Y along the deep perspective trapezoid.
  */
 export function getHorizontalBoundsAtY(y: number): HorizontalBounds {
   const t = getDepthRatio(y);
@@ -59,7 +62,7 @@ export function getHorizontalBoundsAtY(y: number): HorizontalBounds {
 export function clampToArena(x: number, y: number, radius: number): Point2D {
   const clampedY = Phaser.Math.Clamp(
     y,
-    ARENA_BOUNDS.backY + radius * 0.45,
+    ARENA_BOUNDS.backY + radius * 0.4,
     ARENA_BOUNDS.frontY - radius * 0.4,
   );
   const scale = getPerspectiveScale(clampedY);
