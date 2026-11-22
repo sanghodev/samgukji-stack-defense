@@ -8,12 +8,20 @@ export interface MoveInputState {
   y: number;
   /** True if any directional key is held */
   isMoving: boolean;
-  /** True on the frame the debug toggle key (F3) was pressed */
+  /** True on the frame the Basic Attack key (Z) was pressed */
+  lightAttackPressed: boolean;
+  /** True on the frame the Heavy Attack key (X) was pressed */
+  heavyAttackPressed: boolean;
+  /** True on the frame the Combat Debug Panel toggle key (F2) was pressed */
+  toggleCombatPanelPressed: boolean;
+  /** True on the frame the HUD Debug overlay toggle key (F3) was pressed */
   toggleDebugPressed: boolean;
+  /** True on the frame Restart (R) was pressed */
+  restartPressed: boolean;
 }
 
 /**
- * Handles smooth 8-direction movement input via WASD and Arrow keys.
+ * Handles smooth 8-direction movement (WASD + Arrows) and responsive combat inputs (Z, X, F2, F3, R).
  */
 export class InputSystem implements IGameSystem {
   public readonly id = 'input';
@@ -27,6 +35,10 @@ export class InputSystem implements IGameSystem {
     down: Phaser.Input.Keyboard.Key;
     left: Phaser.Input.Keyboard.Key;
     right: Phaser.Input.Keyboard.Key;
+    z: Phaser.Input.Keyboard.Key;
+    x: Phaser.Input.Keyboard.Key;
+    r: Phaser.Input.Keyboard.Key;
+    f2: Phaser.Input.Keyboard.Key;
     f3: Phaser.Input.Keyboard.Key;
   };
 
@@ -43,13 +55,26 @@ export class InputSystem implements IGameSystem {
       down: kb.addKey(Phaser.Input.Keyboard.KeyCodes.DOWN),
       left: kb.addKey(Phaser.Input.Keyboard.KeyCodes.LEFT),
       right: kb.addKey(Phaser.Input.Keyboard.KeyCodes.RIGHT),
+      z: kb.addKey(Phaser.Input.Keyboard.KeyCodes.Z),
+      x: kb.addKey(Phaser.Input.Keyboard.KeyCodes.X),
+      r: kb.addKey(Phaser.Input.Keyboard.KeyCodes.R),
+      f2: kb.addKey(Phaser.Input.Keyboard.KeyCodes.F2),
       f3: kb.addKey(Phaser.Input.Keyboard.KeyCodes.F3),
     };
   }
 
   public sample(): MoveInputState {
     if (!this.keys) {
-      return { x: 0, y: 0, isMoving: false, toggleDebugPressed: false };
+      return {
+        x: 0,
+        y: 0,
+        isMoving: false,
+        lightAttackPressed: false,
+        heavyAttackPressed: false,
+        toggleCombatPanelPressed: false,
+        toggleDebugPressed: false,
+        restartPressed: false,
+      };
     }
 
     let rawX = 0;
@@ -68,7 +93,11 @@ export class InputSystem implements IGameSystem {
       x,
       y,
       isMoving: len > 0,
+      lightAttackPressed: Phaser.Input.Keyboard.JustDown(this.keys.z),
+      heavyAttackPressed: Phaser.Input.Keyboard.JustDown(this.keys.x),
+      toggleCombatPanelPressed: Phaser.Input.Keyboard.JustDown(this.keys.f2),
       toggleDebugPressed: Phaser.Input.Keyboard.JustDown(this.keys.f3),
+      restartPressed: Phaser.Input.Keyboard.JustDown(this.keys.r),
     };
   }
 

@@ -38,7 +38,7 @@ export class DebugOverlay implements IGameSystem {
       lineSpacing: 4,
     });
 
-    this.container = scene.add.container(14, 14, [bg, this.text]);
+    this.container = scene.add.container(14, 74, [bg, this.text]);
     this.container.setDepth(DEPTH_LAYERS.DEBUG);
     this.container.setScrollFactor(0);
   }

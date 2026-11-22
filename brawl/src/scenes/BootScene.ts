@@ -16,6 +16,16 @@ export class BootScene extends Phaser.Scene {
       frameWidth: 160,
       frameHeight: 160,
     });
+    // 8-pose Zhao Yun combat action spritesheet (combo 1-3, heavy windup & thrust)
+    this.load.spritesheet('zhaoyun_actions', '../assets/sprites/zhaoyun_actions.png', {
+      frameWidth: 160,
+      frameHeight: 160,
+    });
+    // 4-type 2-head-tall enemy spritesheet (frame 0 = blue-uniformed bandit)
+    this.load.spritesheet('enemies_4types', '../assets/sprites/enemies_4types.png', {
+      frameWidth: 160,
+      frameHeight: 160,
+    });
   }
 
   public create(): void {
@@ -24,7 +34,7 @@ export class BootScene extends Phaser.Scene {
   }
 
   private generateParticleTextures(): void {
-    // Soft sandstone footstep dust puff
+    // Soft sandstone footstep / landing dust puff
     const dust = this.make.graphics({ x: 0, y: 0 }, false);
     dust.fillStyle(0xf2e3c6, 0.9);
     dust.fillCircle(6, 6, 6);
@@ -32,6 +42,14 @@ export class BootScene extends Phaser.Scene {
     dust.fillCircle(5, 5, 3);
     dust.generateTexture('dust_puff', 12, 12);
     dust.destroy();
+
+    // Crisp pixel-art combat spark
+    const spark = this.make.graphics({ x: 0, y: 0 }, false);
+    spark.fillStyle(0xffffff, 1);
+    spark.fillRect(0, 1, 6, 2);
+    spark.fillRect(2, 0, 2, 4);
+    spark.generateTexture('spark_particle', 6, 4);
+    spark.destroy();
 
     // Warm pink/peach marketplace blossom petal
     const petal = this.make.graphics({ x: 0, y: 0 }, false);

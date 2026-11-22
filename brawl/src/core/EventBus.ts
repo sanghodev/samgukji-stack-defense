@@ -1,10 +1,31 @@
+import { AttackType } from '../config/combatConfig';
+
 export interface GameEventMap {
   'player:moved': { x: number; y: number; vx: number; vy: number; facing: string };
   'debug:toggled': { visible: boolean };
-  // Reserved hooks for upcoming systems:
-  // 'combat:hit': { attackerId: string; targetId: string; damage: number };
-  // 'prop:destroyed': { propId: string; x: number; y: number };
-  // 'audio:play': { key: string; volume?: number };
+  'combat:panel_toggled': { visible: boolean };
+  'combat:player_attack_start': {
+    attackType: AttackType;
+    x: number;
+    y: number;
+    dirX: number;
+    dirY: number;
+  };
+  'combat:hit': {
+    attackerId: string;
+    targetId: string;
+    attackType: AttackType;
+    damage: number;
+    x: number;
+    y: number;
+    dirX: number;
+    dirY: number;
+  };
+  'combat:enemy_landed': { enemyId: string; x: number; y: number; impactSpeed: number };
+  'combat:enemy_defeated': { enemyId: string; x: number; y: number };
+  'combat:player_hurt': { damage: number; hp: number; maxHp: number; x: number; y: number };
+  'combat:player_defeated': { x: number; y: number };
+  'combat:restart': Record<string, never>;
 }
 
 type EventHandler<T> = (payload: T) => void;
