@@ -1,4 +1,5 @@
 import Phaser from 'phaser';
+import { generateStep4Sprites } from '../graphics/Step4SpriteFactory';
 
 export class BootScene extends Phaser.Scene {
   constructor() {
@@ -30,6 +31,7 @@ export class BootScene extends Phaser.Scene {
 
   public create(): void {
     this.generateParticleTextures();
+    generateStep4Sprites(this);
     this.scene.start('BrawlScene');
   }
 

@@ -61,6 +61,7 @@ export class EnvironmentalObject {
   public maxDurability: number;
   public state: EnvObjectState = 'IDLE';
   public ownerId: string | null = null;
+  public coverOccupantId: string | null = null;
   public readyForRemoval = false;
 
   private readonly scene: Phaser.Scene;
@@ -153,6 +154,34 @@ export class EnvironmentalObject {
 
   public get isBroken(): boolean {
     return this.state === 'BROKEN';
+  }
+
+  public get canProvideCover(): boolean {
+    return (
+      !this.isBroken &&
+      this.state === 'IDLE' &&
+      (this.spec.kind === 'table' ||
+        this.spec.kind === 'barrel_water' ||
+        this.spec.kind === 'barrel_empty')
+    );
+  }
+
+  public getCoverSpot(): Point2D {
+    // Positioned slightly behind the cover object in 2.5D depth so the hiding bandit depth-sorts behind it!
+    return clampToArena(this.x, this.y - 22, 18);
+  }
+
+  public claimCover(occupantId: string): boolean {
+    if (!this.canProvideCover) return false;
+    if (this.coverOccupantId !== null && this.coverOccupantId !== occupantId) return false;
+    this.coverOccupantId = occupantId;
+    return true;
+  }
+
+  public releaseCover(occupantId: string): void {
+    if (this.coverOccupantId === occupantId) {
+      this.coverOccupantId = null;
+    }
   }
 
   public get canBePickedUp(): boolean {

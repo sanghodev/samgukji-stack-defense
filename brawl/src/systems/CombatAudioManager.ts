@@ -28,7 +28,21 @@ type SoundChannel =
   | 'fall_thud'
   | 'body_collision'
   | 'chain_reaction'
-  | 'heavy_env_impact';
+  | 'heavy_env_impact'
+  | 'zf_roar'
+  | 'zf_heavy_step'
+  | 'zf_charge_rush'
+  | 'zf_shoulder_hit'
+  | 'zf_skid'
+  | 'bandit_panic'
+  | 'bandit_stumble'
+  | 'bandit_hide'
+  | 'bandit_peek'
+  | 'bandit_surrender'
+  | 'cam_whoosh'
+  | 'cam_splat'
+  | 'cam_squeak'
+  | 'cam_release';
 
 /**
  * Procedural Web Audio API combat & environmental chaos sound engine.
@@ -372,6 +386,145 @@ export class CombatAudioManager implements IAudioSystem {
     const p = this.vary(1.0, 0.06);
     this.playTone(dest, now, 'sine', 135 * p, 34 * p, 0.22, 0.85);
     this.playFilteredNoise(dest, now, 0.14, 2400 * p, 360 * p, 1.0, 0.68);
+  }
+
+  // ==================== STEP 4 ZHANG FEI, COMEDIC AI & CAMERA GAG SOUNDS ====================
+
+  public playZhangFeiRoar(): void {
+    const dest = this.beginPlay('zf_roar', 220, 'combat');
+    if (!dest) return;
+    const now = this.ctx!.currentTime;
+    const p = this.vary(1.0, 0.05);
+    // Deep booming war-cry growl!
+    this.playTone(dest, now, 'sawtooth', 145 * p, 82 * p, 0.28, 0.42);
+    this.playTone(dest, now, 'sine', 110 * p, 58 * p, 0.3, 0.65);
+    this.playFilteredNoise(dest, now, 0.24, 620 * p, 240 * p, 1.8, 0.45);
+  }
+
+  public playHeavyFootstep(): void {
+    const dest = this.beginPlay('zf_heavy_step', 120, 'combat');
+    if (!dest) return;
+    const now = this.ctx!.currentTime;
+    const p = this.vary(1.0, 0.09);
+    this.playTone(dest, now, 'sine', 95 * p, 38 * p, 0.08, 0.34);
+    this.playFilteredNoise(dest, now, 0.045, 580 * p, 220 * p, 1.4, 0.18);
+  }
+
+  public playChargeRush(): void {
+    const dest = this.beginPlay('zf_charge_rush', 140, 'combat');
+    if (!dest) return;
+    const now = this.ctx!.currentTime;
+    this.playFilteredNoise(dest, now, 0.28, 920, 260, 1.1, 0.48);
+    this.playTone(dest, now, 'triangle', 180, 95, 0.22, 0.3);
+  }
+
+  public playShoulderCollision(): void {
+    const dest = this.beginPlay('zf_shoulder_hit', 45, 'combat');
+    if (!dest) return;
+    const now = this.ctx!.currentTime;
+    const p = this.vary(1.0, 0.07);
+    // Massive bowling-ball bulldozer slam!
+    this.playTone(dest, now, 'sine', 150 * p, 32 * p, 0.22, 0.9);
+    this.playTone(dest, now, 'sawtooth', 240 * p, 64 * p, 0.12, 0.32);
+    this.playFilteredNoise(dest, now, 0.12, 2800 * p, 420 * p, 1.0, 0.68);
+  }
+
+  public playChargeSkid(): void {
+    const dest = this.beginPlay('zf_skid', 150, 'combat');
+    if (!dest) return;
+    const now = this.ctx!.currentTime;
+    this.playFilteredNoise(dest, now, 0.2, 1100, 320, 1.5, 0.35);
+    this.playTone(dest, now + 0.04, 'sine', 110, 44, 0.12, 0.36);
+  }
+
+  public playBanditPanicSqueal(): void {
+    // Heavily throttled so 15 bandits don't scream simultaneously!
+    const dest = this.beginPlay('bandit_panic', 620, 'env');
+    if (!dest) return;
+    const now = this.ctx!.currentTime;
+    const p = this.vary(1.0, 0.14);
+    this.playTone(dest, now, 'triangle', 520 * p, 860 * p, 0.11, 0.18);
+    this.playTone(dest, now + 0.09, 'square', 820 * p, 560 * p, 0.08, 0.1);
+  }
+
+  public playStumble(): void {
+    const dest = this.beginPlay('bandit_stumble', 180, 'env');
+    if (!dest) return;
+    const now = this.ctx!.currentTime;
+    const p = this.vary(1.0, 0.1);
+    this.playTone(dest, now, 'triangle', 480 * p, 180 * p, 0.12, 0.22);
+    this.playTone(dest, now + 0.1, 'sine', 130 * p, 48 * p, 0.11, 0.38);
+  }
+
+  public playHideRustle(): void {
+    const dest = this.beginPlay('bandit_hide', 260, 'env');
+    if (!dest) return;
+    const now = this.ctx!.currentTime;
+    this.playFilteredNoise(dest, now, 0.09, 1300, 500, 1.8, 0.18);
+  }
+
+  public playPeekChirp(): void {
+    const dest = this.beginPlay('bandit_peek', 420, 'env');
+    if (!dest) return;
+    const now = this.ctx!.currentTime;
+    const p = this.vary(1.0, 0.12);
+    this.playTone(dest, now, 'sine', 420 * p, 640 * p, 0.075, 0.14);
+  }
+
+  public playSurrenderVoice(): void {
+    const dest = this.beginPlay('bandit_surrender', 360, 'env');
+    if (!dest) return;
+    const now = this.ctx!.currentTime;
+    const p = this.vary(1.0, 0.1);
+    // Comedic defeated descending "으앙~"
+    this.playTone(dest, now, 'triangle', 620 * p, 390 * p, 0.13, 0.2);
+    this.playTone(dest, now + 0.12, 'triangle', 390 * p, 280 * p, 0.15, 0.16);
+  }
+
+  public playCameraWhoosh(): void {
+    const dest = this.beginPlay('cam_whoosh', 200, 'env');
+    if (!dest) return;
+    const now = this.ctx!.currentTime;
+    // Fast rising Doppler zoom toward camera!
+    this.playFilteredNoise(dest, now, 0.17, 420, 2600, 1.3, 0.55);
+    this.playTone(dest, now, 'sine', 240, 760, 0.16, 0.22);
+  }
+
+  public playCameraSplat(volumeMul = 1.0): void {
+    const dest = this.beginPlay('cam_splat', 200, 'env');
+    if (!dest || volumeMul <= 0.01) return;
+    const now = this.ctx!.currentTime;
+    const v = Math.min(1.4, volumeMul);
+
+    // Briefly duck combat bus to highlight the hilarious SPLAT!
+    if (this.combatGain) {
+      const cur = Math.max(0.05, this.tuning.audioVolume);
+      this.combatGain.gain.setTargetAtTime(cur * 0.35, now, 0.01);
+      this.combatGain.gain.setTargetAtTime(cur, now + 0.75, 0.12);
+    }
+
+    // Wet comedic face-on-glass SPLAT!
+    this.playTone(dest, now, 'sine', 210, 52, 0.16, 0.78 * v);
+    this.playFilteredNoise(dest, now, 0.12, 1900, 320, 0.9, 0.72 * v);
+    this.playTone(dest, now + 0.015, 'triangle', 540, 140, 0.1, 0.32 * v);
+  }
+
+  public playCameraSqueak(volumeMul = 1.0): void {
+    const dest = this.beginPlay('cam_squeak', 200, 'env');
+    if (!dest || volumeMul <= 0.01) return;
+    const now = this.ctx!.currentTime;
+    const v = Math.min(1.4, volumeMul);
+    // Long rubbery glass-sliding SQUEEEAAAK!
+    this.playTone(dest, now, 'sine', 1380, 920, 0.24, 0.22 * v);
+    this.playTone(dest, now + 0.22, 'sine', 1120, 720, 0.28, 0.2 * v);
+    this.playTone(dest, now + 0.44, 'triangle', 840, 520, 0.18, 0.14 * v);
+  }
+
+  public playCameraRelease(): void {
+    const dest = this.beginPlay('cam_release', 200, 'env');
+    if (!dest) return;
+    const now = this.ctx!.currentTime;
+    this.playTone(dest, now, 'sine', 260, 120, 0.09, 0.26);
   }
 
   // ==================== INTERNAL AUDIO ENGINE ====================

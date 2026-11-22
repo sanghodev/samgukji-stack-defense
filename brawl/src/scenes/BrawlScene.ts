@@ -14,13 +14,25 @@ import {
   HazardKind,
   MayhemTuning,
 } from '../config/mayhemConfig';
+import {
+  BanditArchetype,
+  createDefaultStep4Tuning,
+  Step4Tuning,
+} from '../config/step4Config';
 import { check25DMeleeHit } from '../core/CombatMath';
 import { EventBus } from '../core/EventBus';
-import { clampToArena, getHorizontalBoundsAtY, getPerspectiveScale } from '../core/Perspective';
+import { sweptCircleHit25D } from '../core/MayhemPhysics';
+import {
+  clampToArena,
+  getDepthOrder,
+  getHorizontalBoundsAtY,
+  getPerspectiveScale,
+} from '../core/Perspective';
 import { Bandit } from '../entities/Bandit';
 import { EnvironmentalObject } from '../entities/EnvironmentalObject';
 import { SurfaceHazard } from '../entities/SurfaceHazard';
 import { Warrior } from '../entities/Warrior';
+import { CameraGagController } from '../systems/CameraGagController';
 import { CollisionChainManager } from '../systems/CollisionChainManager';
 import { CombatAudioManager } from '../systems/CombatAudioManager';
 import { CombatCoordinator } from '../systems/CombatCoordinator';
@@ -37,14 +49,14 @@ import { MarketplaceArena } from '../world/MarketplaceArena';
 
 /**
  * Main fixed-camera 2.5D arena scene for Three Kingdoms Mayhem (삼국지 난장판).
- * Step 3: Mayhem Physics & Environmental Chaos — table pickup/throwing, domino
- * enemy-to-enemy knockback chains, rolling water barrels, ceramic jars, fruit baskets,
- * slippery puddles/food hazards, pooled debris, and material-specific Web Audio.
+ * Step 4: Zhang Fei Bulldozer Charge (맹장돌진), 6 reactive comedic bandit personalities,
+ * fear/panic/fleeing/tripping/hiding/peeking/surrendering, and rare screen-glass camera gags.
  */
 export class BrawlScene extends Phaser.Scene {
   private eventsBus!: EventBus;
   private tuning!: CombatTuning;
   private mayhemTuning!: MayhemTuning;
+  private step4Tuning!: Step4Tuning;
   private systems!: SystemRegistry;
   private inputSystem!: InputSystem;
   private debugOverlay!: DebugOverlay;
@@ -57,6 +69,7 @@ export class BrawlScene extends Phaser.Scene {
   private debris!: DebrisEffectManager;
   private coordinator!: CombatCoordinator;
   private chainManager!: CollisionChainManager;
+  private cameraGag!: CameraGagController;
   private arena!: MarketplaceArena;
   private player!: Warrior;
 
@@ -85,6 +98,7 @@ export class BrawlScene extends Phaser.Scene {
     this.eventsBus = new EventBus();
     this.tuning = createDefaultCombatTuning();
     this.mayhemTuning = createDefaultMayhemTuning();
+    this.step4Tuning = createDefaultStep4Tuning();
     this.systems = new SystemRegistry({ scene: this, events: this.eventsBus });
 
     // Register modular subsystems
@@ -95,13 +109,17 @@ export class BrawlScene extends Phaser.Scene {
     this.vfx = this.systems.register(new ImpactVfxSystem());
     this.debris = this.systems.register(new DebrisEffectManager(this.mayhemTuning));
     this.coordinator = this.systems.register(new CombatCoordinator());
+    this.cameraGag = this.systems.register(
+      new CameraGagController(this.step4Tuning, this.audio, this.screenShake),
+    );
     this.combatHud = this.systems.register(new CombatHud(() => this.resetTestRoom()));
     this.debugOverlay = this.systems.register(new DebugOverlay());
     this.combatDebugPanel = this.systems.register(
-      new CombatDebugPanel(this.tuning, this.mayhemTuning, {
-        onSpawnBandit: () => this.spawnSingleBandit(),
+      new CombatDebugPanel(this.tuning, this.mayhemTuning, this.step4Tuning, {
+        onSpawnBandit: (arch) => this.spawnSingleBandit(arch),
         onSpawnBanditGroup: () => {
-          for (let i = 0; i < 5; i++) this.spawnSingleBandit();
+          const pool: BanditArchetype[] = ['coward', 'clumsy', 'overconfident', 'sneaky', 'stubborn'];
+          for (let i = 0; i < 5; i++) this.spawnSingleBandit(pool[i % pool.length]);
         },
         onClearEnemies: () => this.clearAllBandits(),
         onSpawnObject: (kind) => this.spawnObjectNearPlayer(kind),
@@ -116,6 +134,18 @@ export class BrawlScene extends Phaser.Scene {
           this.debris.clearAll();
           this.clearAllHazards();
         },
+        onTriggerChargeTest: () => {
+          this.player.switchHero('zhangfei');
+          this.player.triggerSpecial(this.inputSystem.sample(), true);
+        },
+        onForceEnemyPanic: () => {
+          for (const b of this.bandits) b.forcePanic(this.coordinator);
+        },
+        onPreviewCameraGag: () => this.cameraGag.forcePreview(),
+        onResetAiStates: () => {
+          for (const b of this.bandits) b.resetAiState(this.coordinator);
+        },
+        onSwitchHero: () => this.player.switchHero(),
         onResetRoom: () => this.resetTestRoom(),
         onTuningChanged: () => this.applyLiveTuning(),
       }),
@@ -131,17 +161,19 @@ export class BrawlScene extends Phaser.Scene {
       screenShake: this.screenShake,
     });
 
-    // Build fixed-camera 2.5D ancient Chinese marketplace arena
     this.arena = new MarketplaceArena(this);
 
-    // Spawn playable chibi Zhao Yun
+    // Step 4 starts with Zhang Fei (장비) selected; press TAB anytime to switch to Zhao Yun!
     this.player = new Warrior(
       this,
       PLAYER_CONFIG.spawnX,
       PLAYER_CONFIG.spawnY,
+      'zhangfei',
       this.tuning,
+      this.step4Tuning,
       {
-        onFootstep: () => this.audio.playFootstep(),
+        onFootstep: (heavy) =>
+          heavy ? this.audio.playHeavyFootstep() : this.audio.playFootstep(),
         onAttackActiveStart: (attackType, x, y, dirX, dirY, range) => {
           if (attackType === 'HEAVY' || attackType === 'LIGHT_3') {
             this.audio.playStrongWhoosh();
@@ -156,6 +188,30 @@ export class BrawlScene extends Phaser.Scene {
             dirX,
             dirY,
           });
+        },
+        onZhangFeiRoar: (x, y) => {
+          this.audio.playZhangFeiRoar();
+          this.debris.spawn('DUST_CLOUD', x, y);
+          this.spawnRoarShockwave(x, y);
+          this.screenShake.trigger(4.5, 140);
+          // Nearby cowardly/nervous bandits witness Zhang Fei's terrifying roar!
+          this.broadcastFearWave(x, y, 360, 34);
+        },
+        onZhangFeiChargeRush: (x, y, dirX, dirY) => {
+          this.audio.playChargeRush();
+          this.debris.spawn('DUST_CLOUD', x, y, -dirX, -dirY);
+          this.broadcastFearWave(x, y, 320, 26);
+        },
+        onZhangFeiChargeSkid: (x, y) => {
+          this.audio.playChargeSkid();
+          this.debris.spawn('LANDING_DUST', x, y);
+        },
+        onZhaoYunWhirlwind: (x, y) => {
+          this.audio.playStrongWhoosh();
+          this.executeZhaoYunWhirlwind(x, y);
+        },
+        onSpecialCooldownRejected: () => {
+          this.combatHud.flashSpecialRejected();
         },
         onPlayerHurt: (damage, hp, maxHp) => {
           this.audio.playPlayerHurt();
@@ -182,9 +238,8 @@ export class BrawlScene extends Phaser.Scene {
 
     this.debugVisGfx = this.add.graphics().setDepth(DEPTH_LAYERS.HUD - 10);
 
-    // Populate Step 3 stage objects & initial 6 bandits
     this.spawnInitialEnvironment();
-    this.spawnInitialBandits();
+    this.spawnStep4BanditSquad();
 
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, this.handleShutdown, this);
   }
@@ -207,25 +262,30 @@ export class BrawlScene extends Phaser.Scene {
       return;
     }
 
-    // Handle SPACE interact (pick up nearest table/jar/basket OR throw carried object)
+    if (input.switchHeroPressed && !this.player.isDefeated) {
+      this.player.switchHero();
+    }
+
+    if (input.specialPressed && !this.player.isDefeated) {
+      this.player.triggerSpecial(input);
+    }
+
     if (input.interactPressed && !this.player.isDefeated) {
       this.handlePlayerInteract();
     }
 
-    // Always buffer player attack inputs even during Hit-Stop
     this.player.bufferInput(input);
 
-    // Always update screen shake, VFX particles, debris, hazards, and arena ambience
+    // Always update screen shake, camera gag overlay, VFX, debris, and arena ambience
     this.screenShake.update(time, delta);
+    this.cameraGag.update(time, delta);
     this.vfx.update(time, delta);
     this.debris.update(time, delta);
     this.arena.update(delta);
 
     if (this.comboHits > 0) {
       this.comboDecayMs -= Math.min(delta, 50);
-      if (this.comboDecayMs <= 0) {
-        this.comboHits = 0;
-      }
+      if (this.comboDecayMs <= 0) this.comboHits = 0;
     }
 
     const frozenByHitStop = this.hitStop.step(delta);
@@ -233,18 +293,14 @@ export class BrawlScene extends Phaser.Scene {
     if (!frozenByHitStop) {
       this.coordinator.update(time, delta);
 
-      // Update player
       this.player.update(delta, input, (x, y, r) =>
         this.arena.resolvePropCollisions(x, y, r),
       );
 
-      // Show SPACE pickup prompt on nearest eligible object
       this.updatePickupPrompt();
-
-      // Resolve player active melee hitbox against bandits & environmental objects
       this.resolvePlayerMeleeHits();
+      this.resolveZhangFeiChargeCollisions();
 
-      // Update environmental objects
       for (let i = this.envObjects.length - 1; i >= 0; i--) {
         const obj = this.envObjects[i];
         obj.update(delta, (x, y, r) => this.arena.resolvePropCollisions(x, y, r));
@@ -254,7 +310,6 @@ export class BrawlScene extends Phaser.Scene {
         }
       }
 
-      // Update bandits
       for (let i = this.bandits.length - 1; i >= 0; i--) {
         const bandit = this.bandits[i];
         bandit.update(
@@ -264,6 +319,7 @@ export class BrawlScene extends Phaser.Scene {
           !this.player.isDefeated,
           this.coordinator,
           this.bandits,
+          this.envObjects,
           (x, y, r) => this.arena.resolvePropCollisions(x, y, r),
         );
         if (bandit.readyForRemoval) {
@@ -273,7 +329,6 @@ export class BrawlScene extends Phaser.Scene {
         }
       }
 
-      // Update surface hazards
       for (let i = this.hazards.length - 1; i >= 0; i--) {
         const hz = this.hazards[i];
         hz.update(delta);
@@ -283,23 +338,28 @@ export class BrawlScene extends Phaser.Scene {
         }
       }
 
-      // Run Step 3 emergent physical collisions (tables, barrels, domino chains, slipping!)
       this.chainManager.step(delta, this.bandits, this.envObjects, this.hazards);
     }
 
     this.renderDebugVisuals();
 
-    const aliveCount = this.bandits.filter((b) => b.isAlive).length;
+    const activeEnemies = this.bandits.filter((b) => !b.isNeutralized).length;
+    const surrenderedCount = this.bandits.filter((b) => b.state === 'SURRENDERED').length;
+
     this.combatHud.render(
       {
+        heroId: this.player.heroId,
         playerHp: this.player.hp,
         playerMaxHp: this.player.maxHp,
         playerDefeated: this.player.isDefeated,
-        enemiesAlive: aliveCount,
-        enemiesDefeated: this.enemiesDefeated,
+        specialReadyRatio: this.player.specialReadyRatio,
+        enemiesActive: activeEnemies,
+        enemiesNeutralized: this.enemiesDefeated + surrenderedCount,
+        enemiesSurrendered: surrenderedCount,
         comboHits: this.comboHits,
       },
       this,
+      delta,
     );
 
     this.debugOverlay.render({
@@ -311,6 +371,209 @@ export class BrawlScene extends Phaser.Scene {
       facing: this.player.facingLabel,
       speed: this.player.speed,
     });
+  }
+
+  /**
+   * Swept 2.5D Bulldozer Charge collisions for Zhang Fei's 맹장돌진!
+   * Bowls through multiple bandits (connecting into STEP 3 domino chains) and smashes props.
+   */
+  private resolveZhangFeiChargeCollisions(): void {
+    if (!this.player.isChargeActive) return;
+
+    const chargeRadius = 32;
+    let hitEnemy = false;
+
+    // 1. Charge vs Bandits
+    for (const bandit of this.bandits) {
+      if (!bandit.isVulnerable) continue;
+      if (!this.player.chargeHitTracker.canHit(bandit.id)) continue;
+
+      const hit = sweptCircleHit25D(
+        this.player.prevX,
+        this.player.prevY,
+        this.player.x,
+        this.player.y,
+        chargeRadius,
+        bandit.x,
+        bandit.y,
+        bandit.collisionRadius,
+        PERSPECTIVE_CONFIG.verticalMoveRatio,
+      );
+      if (!hit.hit) continue;
+
+      this.player.chargeHitTracker.recordHit(bandit.id);
+
+      // Blend charge direction + slight lateral bowling deflection
+      const dirX = this.player.chargeDirX * 0.72 + hit.nx * 0.28;
+      const dirY = this.player.chargeDirY * 0.72 + hit.ny * 0.28;
+      const dmg = Math.round(this.step4Tuning.chargeDamage * this.tuning.playerDamageMultiplier);
+
+      const applied = bandit.takeHit(
+        {
+          damage: dmg,
+          dirX,
+          dirY,
+          knockbackForce: this.step4Tuning.chargeKnockback,
+          launchVz: this.step4Tuning.chargeLaunchVz,
+          isHeavy: true,
+        },
+        this.coordinator,
+      );
+      if (!applied) continue;
+
+      hitEnemy = true;
+      this.comboHits += 1;
+      this.comboDecayMs = 2400;
+
+      this.vfx.spawnHitImpact(bandit.x, bandit.y, bandit.elevationZ, dirX, dirY, 'HEAVY', dmg);
+      this.debris.spawn('HEAVY_IMPACT_SPARK', bandit.x, bandit.y, dirX, dirY);
+      this.debris.spawn('DUST_CLOUD', bandit.x, bandit.y, dirX, dirY);
+
+      // Drain charge energy per bandit plowed through (Elites drain more!)
+      const loss =
+        this.step4Tuning.chargeEnergyLossPerHit * (bandit.archetype === 'elite' ? 2.0 : 1.0);
+      this.player.consumeChargeEnergy(loss);
+
+      // Witnesses panic when seeing friends launched flying!
+      this.broadcastFearWave(bandit.x, bandit.y, 260, 22);
+
+      if (!this.player.isChargeActive) break;
+    }
+
+    if (hitEnemy) {
+      this.audio.playShoulderCollision();
+      this.audio.playEnemyHurt(true);
+      this.hitStop.trigger(48);
+      this.screenShake.trigger(7.0, 130, this.player.chargeDirX, this.player.chargeDirY);
+    }
+
+    // 2. Charge vs Environmental Objects (smashes jars, barrels, lightweight tables!)
+    if (!this.player.isChargeActive) return;
+
+    for (const obj of this.envObjects) {
+      if (obj.isBroken || obj.state === 'CARRIED') continue;
+      if (!this.player.chargeHitTracker.canHit(obj.id)) continue;
+
+      const hit = sweptCircleHit25D(
+        this.player.prevX,
+        this.player.prevY,
+        this.player.x,
+        this.player.y,
+        chargeRadius,
+        obj.x,
+        obj.y,
+        obj.radius,
+        PERSPECTIVE_CONFIG.verticalMoveRatio,
+      );
+      if (!hit.hit) continue;
+
+      this.player.chargeHitTracker.recordHit(obj.id);
+      obj.applyStrike(
+        this.player.chargeDirX,
+        this.player.chargeDirY,
+        this.step4Tuning.chargeKnockback * 1.15,
+        2,
+        true,
+      );
+
+      this.audio.playHeavyEnvImpact();
+      this.debris.spawn('DUST_CLOUD', obj.x, obj.y, hit.nx, hit.ny);
+      this.screenShake.trigger(5.2, 100, this.player.chargeDirX, this.player.chargeDirY);
+
+      // Heavy tables drain more charge energy
+      const energyCost = obj.spec.kind === 'table' ? 38 : 16;
+      this.player.consumeChargeEnergy(energyCost);
+      if (!this.player.isChargeActive) break;
+    }
+  }
+
+  private executeZhaoYunWhirlwind(x: number, y: number): void {
+    const scale = getPerspectiveScale(y);
+    const ring = this.add.graphics().setPosition(x, y - 20 * scale).setDepth(getDepthOrder(y) + 30);
+    ring.lineStyle(10 * scale, 0x38bdf8, 0.85);
+    ring.strokeEllipse(0, 0, 210 * scale, 140 * scale);
+    this.tweens.add({
+      targets: ring,
+      alpha: 0,
+      scale: 1.25,
+      duration: 240,
+      onComplete: () => ring.destroy(),
+    });
+
+    let hits = 0;
+    for (const bandit of this.bandits) {
+      if (!bandit.isVulnerable) continue;
+      const dx = bandit.x - x;
+      const dy = (bandit.y - y) / PERSPECTIVE_CONFIG.verticalMoveRatio;
+      const dist = Math.hypot(dx, dy);
+      if (dist > 135) continue;
+
+      const nx = dist > 0.1 ? dx / dist : 1;
+      const ny = dist > 0.1 ? dy / dist : 0;
+      const dmg = Math.round(36 * this.tuning.playerDamageMultiplier);
+      if (
+        bandit.takeHit(
+          {
+            damage: dmg,
+            dirX: nx,
+            dirY: ny,
+            knockbackForce: 430,
+            launchVz: 260,
+            isHeavy: true,
+          },
+          this.coordinator,
+        )
+      ) {
+        hits += 1;
+        this.comboHits += 1;
+        this.comboDecayMs = 2200;
+        this.vfx.spawnHitImpact(bandit.x, bandit.y, bandit.elevationZ, nx, ny, 'LIGHT_3', dmg);
+      }
+    }
+
+    if (hits > 0) {
+      this.audio.playComboFinisherImpact();
+      this.hitStop.trigger(50);
+      this.screenShake.trigger(6.0, 120);
+      this.broadcastFearWave(x, y, 280, 24);
+    }
+  }
+
+  private spawnRoarShockwave(x: number, y: number): void {
+    const scale = getPerspectiveScale(y);
+    const g = this.add.graphics().setPosition(x, y - 22 * scale).setDepth(getDepthOrder(y) + 30);
+    g.lineStyle(5 * scale, 0xc084fc, 0.9);
+    g.strokeEllipse(0, 0, 110 * scale, 70 * scale);
+    g.lineStyle(3 * scale, 0xfde047, 0.95);
+    g.strokeEllipse(0, 0, 74 * scale, 48 * scale);
+
+    this.tweens.add({
+      targets: g,
+      scale: 2.3,
+      alpha: 0,
+      duration: 240,
+      ease: 'Cubic.easeOut',
+      onComplete: () => g.destroy(),
+    });
+  }
+
+  private broadcastFearWave(
+    originX: number,
+    originY: number,
+    radius: number,
+    baseAmount: number,
+  ): void {
+    const rSq = radius * radius;
+    for (const bandit of this.bandits) {
+      if (bandit.isNeutralized) continue;
+      const dx = bandit.x - originX;
+      const dy = (bandit.y - originY) / PERSPECTIVE_CONFIG.verticalMoveRatio;
+      const distSq = dx * dx + dy * dy;
+      if (distSq <= rSq) {
+        const falloff = 1 - Math.sqrt(distSq) / (radius * 1.25);
+        bandit.addFear(baseAmount * Math.max(0.35, falloff), this.coordinator);
+      }
+    }
   }
 
   private handlePlayerInteract(): void {
@@ -366,9 +629,9 @@ export class BrawlScene extends Phaser.Scene {
     const spec = this.player.currentAttack;
     if (!query || !spec) return;
 
+    const heroMul = this.player.profile;
     let hitEnemyCount = 0;
 
-    // 1. Check hits against bandits
     for (const bandit of this.bandits) {
       if (!bandit.isVulnerable) continue;
       if (!this.player.hitTracker.canHit(bandit.id)) continue;
@@ -379,7 +642,11 @@ export class BrawlScene extends Phaser.Scene {
       this.player.hitTracker.recordHit(bandit.id);
       const damage = Math.max(
         1,
-        Math.round(spec.baseDamage * this.tuning.playerDamageMultiplier),
+        Math.round(
+          spec.baseDamage *
+            this.tuning.playerDamageMultiplier *
+            heroMul.damageMultiplier,
+        ),
       );
 
       const applied = bandit.takeHit(
@@ -387,7 +654,7 @@ export class BrawlScene extends Phaser.Scene {
           damage,
           dirX: query.dirX,
           dirY: query.dirY,
-          knockbackForce: spec.knockbackForce,
+          knockbackForce: spec.knockbackForce * heroMul.knockbackMultiplier,
           launchVz: spec.launchVz,
           isHeavy: spec.isHeavy,
         },
@@ -409,6 +676,10 @@ export class BrawlScene extends Phaser.Scene {
         damage,
       );
 
+      if (spec.isHeavy || spec.isFinisher) {
+        this.broadcastFearWave(bandit.x, bandit.y, 240, 18);
+      }
+
       this.eventsBus.emit('combat:hit', {
         attackerId: this.player.id,
         targetId: bandit.id,
@@ -421,7 +692,6 @@ export class BrawlScene extends Phaser.Scene {
       });
     }
 
-    // 2. Check spear strikes against environmental objects (barrels roll, jars shatter, baskets spill!)
     for (const obj of this.envObjects) {
       if (obj.isBroken || obj.state === 'CARRIED') continue;
       if (!this.player.hitTracker.canHit(obj.id)) continue;
@@ -447,11 +717,8 @@ export class BrawlScene extends Phaser.Scene {
       );
 
       if (!obj.isBroken) {
-        if (obj.spec.rollable) {
-          this.audio.playBarrelCollision();
-        } else {
-          this.audio.playTableImpact();
-        }
+        if (obj.spec.rollable) this.audio.playBarrelCollision();
+        else this.audio.playTableImpact();
         this.debris.spawn('DUST_CLOUD', obj.x, obj.y, query.dirX, query.dirY);
       }
       this.hitStop.trigger(spec.isHeavy ? 42 : 20);
@@ -482,22 +749,13 @@ export class BrawlScene extends Phaser.Scene {
     }
   }
 
-  /**
-   * Stage object placement per Step 3 spec:
-   * - 3 wooden tables
-   * - 3 barrels (2 water-filled, 1 empty)
-   * - 4 ceramic jars
-   * - 2 fruit baskets
-   * - 1 small starter puddle
-   * Spread cleanly across foreground, mid, and background depths with open paths!
-   */
   private spawnInitialEnvironment(): void {
-    // 3 Wooden Tables (positioned near bandits for immediate pickup & throw fun)
+    // 3 Wooden Tables (also serve as valid cover spots!)
     this.spawnObject('table', 515, 488);
     this.spawnObject('table', 775, 494);
     this.spawnObject('table', 640, 344);
 
-    // 3 Barrels (2 water barrels + 1 empty barrel)
+    // 3 Barrels (2 water-filled, 1 empty — also valid cover!)
     this.spawnObject('barrel_water', 442, 378);
     this.spawnObject('barrel_water', 845, 384);
     this.spawnObject('barrel_empty', 340, 566);
@@ -537,12 +795,8 @@ export class BrawlScene extends Phaser.Scene {
             this.debris.spawn('LANDING_DUST', o.x, o.y);
           }
         },
-        onRollTick: () => {
-          this.audio.playBarrelRoll();
-        },
-        onBroken: (o, dirX, dirY) => {
-          this.handleObjectBroken(o, dirX, dirY);
-        },
+        onRollTick: () => this.audio.playBarrelRoll(),
+        onBroken: (o, dirX, dirY) => this.handleObjectBroken(o, dirX, dirY),
       },
     );
     this.envObjects.push(obj);
@@ -560,6 +814,16 @@ export class BrawlScene extends Phaser.Scene {
     dirX: number,
     dirY: number,
   ): void {
+    // Notify any bandit hiding behind this destroyed cover!
+    for (const bandit of this.bandits) {
+      if (bandit.coverObject === obj) {
+        bandit.onCoverDestroyed(this.coordinator);
+      }
+    }
+
+    // Loud destruction spooks nearby cowards!
+    this.broadcastFearWave(obj.x, obj.y, 220, 16);
+
     if (obj.spec.kind === 'table') {
       this.audio.playTableShatter();
       this.debris.spawn('WOOD_SPLINTERS', obj.x, obj.y, dirX, dirY);
@@ -585,7 +849,6 @@ export class BrawlScene extends Phaser.Scene {
       this.debris.spawn('FRUIT_SCATTER', obj.x, obj.y, dirX, dirY);
       this.debris.spawn('WOOD_SPLINTERS', obj.x, obj.y, dirX, dirY);
       this.spawnHazard('spilled_food', obj.x, obj.y);
-      // Drop a classic cartoon banana peel slightly ahead!
       this.spawnHazard(
         'banana_peel',
         obj.x + (dirX || 1) * 34,
@@ -610,38 +873,50 @@ export class BrawlScene extends Phaser.Scene {
     return hz;
   }
 
-  private spawnInitialBandits(): void {
-    const presetSpots: Array<{ x: number; y: number }> = [
-      { x: 475, y: 318 },
-      { x: 805, y: 326 },
-      { x: 382, y: 458 },
-      { x: 896, y: 468 },
-      { x: 472, y: 586 },
-      { x: 818, y: 594 },
+  /**
+   * Step 4 Test Scenario Squad (12 bandits across all 6 personalities):
+   * - 2 Cowards, 2 Clumsy, 2 Overconfident, 2 Sneaky, 3 Stubborn, 1 Elite!
+   */
+  private spawnStep4BanditSquad(): void {
+    const squad: Array<{ arch: BanditArchetype; x: number; y: number }> = [
+      { arch: 'coward', x: 470, y: 312 },
+      { arch: 'coward', x: 810, y: 318 },
+      { arch: 'clumsy', x: 560, y: 396 },
+      { arch: 'clumsy', x: 724, y: 404 },
+      { arch: 'overconfident', x: 390, y: 468 },
+      { arch: 'overconfident', x: 892, y: 476 },
+      { arch: 'sneaky', x: 486, y: 548 },
+      { arch: 'sneaky', x: 792, y: 554 },
+      { arch: 'stubborn', x: 355, y: 598 },
+      { arch: 'stubborn', x: 930, y: 596 },
+      { arch: 'stubborn', x: 565, y: 626 },
+      { arch: 'elite', x: 720, y: 334 },
     ];
 
-    const count = Math.max(1, Math.round(this.tuning.enemyCount));
-    for (let i = 0; i < count; i++) {
-      if (i < presetSpots.length) {
-        this.spawnBanditAt(presetSpots[i].x, presetSpots[i].y, i);
-      } else {
-        this.spawnSingleBandit();
-      }
-    }
+    squad.forEach((entry, idx) => {
+      this.spawnBanditAt(entry.x, entry.y, idx, entry.arch);
+    });
   }
 
-  private spawnSingleBandit(): void {
+  private spawnSingleBandit(archetype?: BanditArchetype): void {
     const y = Phaser.Math.Between(ARENA_BOUNDS.backY + 45, ARENA_BOUNDS.frontY - 55);
     const bounds = getHorizontalBoundsAtY(y);
     const leftSide = Math.random() < 0.5;
     const x = leftSide
-      ? Phaser.Math.Between(Math.round(bounds.left + 70), Math.round(bounds.left + 210))
-      : Phaser.Math.Between(Math.round(bounds.right - 210), Math.round(bounds.right - 70));
+      ? Phaser.Math.Between(Math.round(bounds.left + 70), Math.round(bounds.left + 220))
+      : Phaser.Math.Between(Math.round(bounds.right - 220), Math.round(bounds.right - 70));
 
-    this.spawnBanditAt(x, y, this.bandits.length);
+    const pool: BanditArchetype[] = ['coward', 'clumsy', 'overconfident', 'sneaky', 'stubborn'];
+    const arch = archetype ?? pool[this.nextBanditSeq % pool.length];
+    this.spawnBanditAt(x, y, this.bandits.length, arch);
   }
 
-  private spawnBanditAt(rawX: number, rawY: number, slotIndex: number): void {
+  private spawnBanditAt(
+    rawX: number,
+    rawY: number,
+    slotIndex: number,
+    archetype: BanditArchetype,
+  ): void {
     const clamped = clampToArena(rawX, rawY, 20);
     const id = `bandit_${this.nextBanditSeq++}`;
 
@@ -649,9 +924,11 @@ export class BrawlScene extends Phaser.Scene {
       this,
       id,
       slotIndex,
+      archetype,
       clamped.x,
       clamped.y,
       this.tuning,
+      this.step4Tuning,
       {
         onAttackWhoosh: () => this.audio.playEnemyWhoosh(),
         onHitPlayer: (damage, dirX, dirY) => {
@@ -661,9 +938,7 @@ export class BrawlScene extends Phaser.Scene {
           const strong = impactSpeed > 150;
           this.audio.playKnockdownLanding();
           this.vfx.spawnLandingImpact(b.x, b.y, strong);
-          if (strong) {
-            this.screenShake.trigger(3.2, 75, 0, 1);
-          }
+          if (strong) this.screenShake.trigger(3.2, 75, 0, 1);
           this.eventsBus.emit('combat:enemy_landed', {
             enemyId: b.id,
             x: b.x,
@@ -674,12 +949,30 @@ export class BrawlScene extends Phaser.Scene {
         onDefeated: (b) => {
           this.enemiesDefeated += 1;
           this.audio.playEnemyDefeat();
+          this.broadcastFearWave(b.x, b.y, 260, 18);
           this.eventsBus.emit('combat:enemy_defeated', {
             enemyId: b.id,
             x: b.x,
             y: b.y,
           });
         },
+        onPanic: () => this.audio.playBanditPanicSqueal(),
+        onTrip: (b) => {
+          this.audio.playStumble();
+          this.debris.spawn('DUST_CLOUD', b.x, b.y);
+        },
+        onHide: () => this.audio.playHideRustle(),
+        onPeek: () => this.audio.playPeekChirp(),
+        onSurrender: () => this.audio.playSurrenderVoice(),
+        onTryCameraGag: (b, launchSpeed, vy) =>
+          this.cameraGag.tryTrigger(
+            b.x,
+            b.y,
+            launchSpeed,
+            vy,
+            b.spec.cameraGagEligible,
+            () => b.resolveAfterCameraGag(),
+          ),
       },
     );
 
@@ -715,6 +1008,7 @@ export class BrawlScene extends Phaser.Scene {
   private resetTestRoom(): void {
     this.clearAllBandits();
     this.resetEnvironmentObjects();
+    this.cameraGag.reset();
     this.hitStop.reset();
     this.screenShake.reset();
     this.coordinator.reset();
@@ -722,7 +1016,7 @@ export class BrawlScene extends Phaser.Scene {
     this.comboHits = 0;
     this.comboDecayMs = 0;
     this.player.reset(PLAYER_CONFIG.spawnX, PLAYER_CONFIG.spawnY);
-    this.spawnInitialBandits();
+    this.spawnStep4BanditSquad();
     this.eventsBus.emit('combat:restart', {});
   }
 
@@ -739,7 +1033,7 @@ export class BrawlScene extends Phaser.Scene {
     const showActors = this.tuning.showGroundPositions || this.mayhemTuning.showActorShapes;
     if (showActors) {
       const pScale = getPerspectiveScale(this.player.y);
-      this.debugVisGfx.lineStyle(2, 0x22c55e, 0.9);
+      this.debugVisGfx.lineStyle(2, this.player.isChargeActive ? 0xc084fc : 0x22c55e, 0.9);
       this.debugVisGfx.strokeEllipse(
         this.player.x,
         this.player.y,
@@ -748,6 +1042,7 @@ export class BrawlScene extends Phaser.Scene {
       );
 
       for (const b of this.bandits) {
+        if (b.state === 'CAMERA_GAGGED') continue;
         const bScale = getPerspectiveScale(b.y);
         this.debugVisGfx.lineStyle(2, b.isChainProjectile ? 0xf97316 : 0x38bdf8, 0.85);
         this.debugVisGfx.strokeEllipse(

@@ -1,28 +1,34 @@
 import Phaser from 'phaser';
 import { DEPTH_LAYERS, GAME_HEIGHT, GAME_WIDTH } from '../config/arenaConfig';
+import { HERO_PROFILES, HeroId } from '../config/step4Config';
 import { IGameSystem, SystemContext } from './ModuleRegistry';
 
 export interface CombatHudSnapshot {
+  heroId: HeroId;
   playerHp: number;
   playerMaxHp: number;
   playerDefeated: boolean;
-  enemiesAlive: number;
-  enemiesDefeated: number;
+  specialReadyRatio: number;
+  enemiesActive: number;
+  enemiesNeutralized: number;
+  enemiesSurrendered: number;
   comboHits: number;
 }
 
 /**
- * Minimal arcade HUD for the Step 2 Combat Feel Lab:
- * - Player health bar
- * - Enemy defeat & remaining counter
- * - Combo hit counter
- * - Restart prompt when defeated or room cleared
+ * Arcade HUD for Step 4:
+ * - Active Hero HP bar & [V] Signature Special readiness gauge (맹장돌진 / 청룡선풍)
+ * - Enemy neutralized/surrendered/remaining counter
+ * - Combo hit counter & controls legend (including TAB switch & V special)
  */
 export class CombatHud implements IGameSystem {
   public readonly id = 'combat-hud';
 
+  private heroNameText?: Phaser.GameObjects.Text;
   private hpBarGfx?: Phaser.GameObjects.Graphics;
   private hpText?: Phaser.GameObjects.Text;
+  private specialBarGfx?: Phaser.GameObjects.Graphics;
+  private specialLabel?: Phaser.GameObjects.Text;
   private counterText?: Phaser.GameObjects.Text;
   private comboText?: Phaser.GameObjects.Text;
   private statusOverlay?: Phaser.GameObjects.Container;
@@ -31,33 +37,38 @@ export class CombatHud implements IGameSystem {
   private onRestart?: () => void;
 
   private lastComboShown = 0;
+  private rejectFlashMs = 0;
 
   constructor(onRestart: () => void) {
     this.onRestart = onRestart;
   }
 
+  public flashSpecialRejected(): void {
+    this.rejectFlashMs = 240;
+  }
+
   public init(ctx: SystemContext): void {
     const { scene } = ctx;
 
-    // 1. Top-left Player HP bar panel
+    // 1. Top-left Active Hero HP + [V] Special Ability panel
     const hpBg = scene.add.graphics().setDepth(DEPTH_LAYERS.HUD);
-    hpBg.fillStyle(0x1c120c, 0.84);
-    hpBg.fillRoundedRect(14, 14, 244, 52, 7);
-    hpBg.lineStyle(1.5, 0xfbbf24, 0.72);
-    hpBg.strokeRoundedRect(14, 14, 244, 52, 7);
+    hpBg.fillStyle(0x1c120c, 0.86);
+    hpBg.fillRoundedRect(14, 14, 258, 74, 7);
+    hpBg.lineStyle(1.5, 0xfbbf24, 0.75);
+    hpBg.strokeRoundedRect(14, 14, 258, 74, 7);
 
-    scene.add
-      .text(24, 21, '조운 (ZHAO YUN)', {
+    this.heroNameText = scene.add
+      .text(24, 20, '장비 (ZHANG FEI) · [TAB] 교대', {
         fontFamily: 'Malgun Gothic, Apple SD Gothic Neo, sans-serif',
         fontSize: '12px',
         fontStyle: 'bold',
-        color: '#fde047',
+        color: '#c084fc',
       })
       .setDepth(DEPTH_LAYERS.HUD + 1);
 
     this.hpBarGfx = scene.add.graphics().setDepth(DEPTH_LAYERS.HUD + 1);
     this.hpText = scene.add
-      .text(246, 21, '100 / 100', {
+      .text(262, 20, '130 / 130', {
         fontFamily: 'Consolas, Menlo, monospace',
         fontSize: '11px',
         fontStyle: 'bold',
@@ -66,8 +77,18 @@ export class CombatHud implements IGameSystem {
       .setOrigin(1, 0)
       .setDepth(DEPTH_LAYERS.HUD + 2);
 
-    // 2. Top-center Enemy Defeat Counter pill
-    const pillW = 248;
+    this.specialBarGfx = scene.add.graphics().setDepth(DEPTH_LAYERS.HUD + 1);
+    this.specialLabel = scene.add
+      .text(24, 62, '[V] 맹장돌진 READY', {
+        fontFamily: 'Malgun Gothic, Apple SD Gothic Neo, sans-serif',
+        fontSize: '11px',
+        fontStyle: 'bold',
+        color: '#fde047',
+      })
+      .setDepth(DEPTH_LAYERS.HUD + 2);
+
+    // 2. Top-center Enemy Counter pill
+    const pillW = 296;
     const pillX = GAME_WIDTH / 2 - pillW / 2;
     const pillBg = scene.add.graphics().setDepth(DEPTH_LAYERS.HUD);
     pillBg.fillStyle(0x1c120c, 0.82);
@@ -76,17 +97,17 @@ export class CombatHud implements IGameSystem {
     pillBg.strokeRoundedRect(pillX, 14, pillW, 38, 7);
 
     this.counterText = scene.add
-      .text(GAME_WIDTH / 2, 33, '처치: 0   |   산적: 6', {
+      .text(GAME_WIDTH / 2, 33, '제압: 0  |  항복: 0  |  남은 산적: 12', {
         fontFamily: 'Malgun Gothic, Apple SD Gothic Neo, sans-serif',
-        fontSize: '14px',
+        fontSize: '13px',
         fontStyle: 'bold',
         color: '#f8fafc',
       })
       .setOrigin(0.5)
       .setDepth(DEPTH_LAYERS.HUD + 1);
 
-    // 3. Top-right Arcade Title & Restart button
-    const badgeW = 248;
+    // 3. Top-right Arcade Title
+    const badgeW = 256;
     const bx = GAME_WIDTH - badgeW - 14;
     const titleBg = scene.add.graphics().setDepth(DEPTH_LAYERS.HUD);
     titleBg.fillStyle(0x1c120c, 0.8);
@@ -105,15 +126,15 @@ export class CombatHud implements IGameSystem {
       .setDepth(DEPTH_LAYERS.HUD + 1);
 
     scene.add
-      .text(bx + badgeW / 2, 47, 'STEP 3 · MAYHEM PHYSICS', {
+      .text(bx + badgeW / 2, 47, 'STEP 4 · ZHANG FEI & CHAOS AI', {
         fontFamily: 'Consolas, Menlo, monospace',
         fontSize: '10px',
-        color: '#fb923c',
+        color: '#c084fc',
       })
       .setOrigin(0.5)
       .setDepth(DEPTH_LAYERS.HUD + 1);
 
-    // 4. Combo Hit Counter (top-right below title)
+    // 4. Combo Hit Counter
     this.comboText = scene.add
       .text(GAME_WIDTH - 24, 72, '', {
         fontFamily: 'Consolas, Menlo, monospace',
@@ -128,10 +149,10 @@ export class CombatHud implements IGameSystem {
       .setVisible(false);
 
     // 5. Bottom-right controls legend
-    const hintW = 556;
+    const hintW = 684;
     const hintX = GAME_WIDTH - hintW - 14;
     const hintBg = scene.add.graphics().setDepth(DEPTH_LAYERS.HUD);
-    hintBg.fillStyle(0x0b101b, 0.78);
+    hintBg.fillStyle(0x0b101b, 0.8);
     hintBg.fillRoundedRect(hintX, GAME_HEIGHT - 34, hintW, 24, 5);
     hintBg.lineStyle(1, 0x94a3b8, 0.35);
     hintBg.strokeRoundedRect(hintX, GAME_HEIGHT - 34, hintW, 24, 5);
@@ -140,7 +161,7 @@ export class CombatHud implements IGameSystem {
       .text(
         hintX + hintW / 2,
         GAME_HEIGHT - 22,
-        'WASD/방향키: 이동 · Z: 3연격 · X: 강공격 · SPACE: 잡기/던지기 · R: 재시작 · F2: 디버그패널',
+        'WASD/방향키: 이동 · Z: 3연격 · X: 강공격 · V: 필살기(돌진) · SPACE: 잡기/던지기 · TAB: 영웅교대 · F2: 디버그',
         {
           fontFamily: 'Malgun Gothic, Apple SD Gothic Neo, sans-serif',
           fontSize: '11px',
@@ -150,7 +171,7 @@ export class CombatHud implements IGameSystem {
       .setOrigin(0.5)
       .setDepth(DEPTH_LAYERS.HUD + 1);
 
-    // 6. Center Status Banner (Defeated / Room Cleared)
+    // 6. Center Status Banner
     const dim = scene.add.rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2, GAME_WIDTH, GAME_HEIGHT, 0x000000, 0.45);
     const card = scene.add.rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2, 380, 168, 0x1c120c, 0.94);
     card.setStrokeStyle(2, 0xfbbf24, 0.9);
@@ -196,30 +217,74 @@ export class CombatHud implements IGameSystem {
       .setVisible(false);
   }
 
-  public render(snap: CombatHudSnapshot, scene: Phaser.Scene): void {
-    // Player HP bar
+  public render(snap: CombatHudSnapshot, scene: Phaser.Scene, deltaMs: number): void {
+    const prof = HERO_PROFILES[snap.heroId];
+    if (this.rejectFlashMs > 0) {
+      this.rejectFlashMs = Math.max(0, this.rejectFlashMs - deltaMs);
+    }
+
+    this.heroNameText?.setText(`${prof.displayName} (${prof.engName}) · [TAB]`);
+    this.heroNameText?.setColor(prof.accentColor);
+
+    // HP bar
     if (this.hpBarGfx && this.hpText) {
       const ratio = Phaser.Math.Clamp(snap.playerHp / Math.max(1, snap.playerMaxHp), 0, 1);
       this.hpBarGfx.clear();
       this.hpBarGfx.fillStyle(0x0f172a, 1);
-      this.hpBarGfx.fillRoundedRect(24, 41, 224, 15, 4);
+      this.hpBarGfx.fillRoundedRect(24, 39, 238, 14, 4);
       if (ratio > 0) {
-        const fillW = Math.max(6, Math.round(224 * ratio));
+        const fillW = Math.max(6, Math.round(238 * ratio));
         const barCol = ratio > 0.3 ? 0x22c55e : 0xef4444;
         this.hpBarGfx.fillStyle(barCol, 1);
-        this.hpBarGfx.fillRoundedRect(24, 41, fillW, 15, 4);
+        this.hpBarGfx.fillRoundedRect(24, 39, fillW, 14, 4);
         this.hpBarGfx.fillStyle(0xffffff, 0.28);
-        this.hpBarGfx.fillRoundedRect(24, 41, fillW, 5, 3);
+        this.hpBarGfx.fillRoundedRect(24, 39, fillW, 5, 3);
       }
       this.hpText.setText(`${snap.playerHp} / ${snap.playerMaxHp}`);
     }
 
-    // Enemy counter
+    // [V] Special Ability bar
+    if (this.specialBarGfx && this.specialLabel) {
+      const ready = snap.specialReadyRatio >= 1;
+      const barCol =
+        this.rejectFlashMs > 0
+          ? 0xef4444
+          : ready
+            ? snap.heroId === 'zhangfei'
+              ? 0xa855f7
+              : 0x0ea5e9
+            : 0x475569;
+
+      this.specialBarGfx.clear();
+      this.specialBarGfx.fillStyle(0x0f172a, 1);
+      this.specialBarGfx.fillRoundedRect(142, 62, 120, 12, 3);
+      if (snap.specialReadyRatio > 0) {
+        this.specialBarGfx.fillStyle(barCol, 1);
+        this.specialBarGfx.fillRoundedRect(
+          142,
+          62,
+          Math.max(4, Math.round(120 * snap.specialReadyRatio)),
+          12,
+          3,
+        );
+      }
+
+      this.specialLabel.setText(
+        ready
+          ? `[V] ${prof.specialName} READY!`
+          : `[V] ${prof.specialName} ${Math.round(snap.specialReadyRatio * 100)}%`,
+      );
+      this.specialLabel.setColor(
+        this.rejectFlashMs > 0 ? '#f87171' : ready ? '#fde047' : '#94a3b8',
+      );
+    }
+
+    // Counter
     this.counterText?.setText(
-      `처치: ${snap.enemiesDefeated}   |   남은 산적: ${snap.enemiesAlive}`,
+      `제압: ${snap.enemiesNeutralized}  |  항복: ${snap.enemiesSurrendered}  |  산적: ${snap.enemiesActive}`,
     );
 
-    // Combo hit counter
+    // Combo
     if (this.comboText) {
       if (snap.comboHits >= 2) {
         this.comboText.setVisible(true);
@@ -241,13 +306,12 @@ export class CombatHud implements IGameSystem {
       this.lastComboShown = snap.comboHits;
     }
 
-    // Defeat overlay
     if (this.statusOverlay && this.statusTitle && this.statusSub) {
       if (snap.playerDefeated) {
         this.statusOverlay.setVisible(true);
-        this.statusTitle.setText('조운 쓰러짐!');
+        this.statusTitle.setText(`${prof.displayName} 쓰러짐!`);
         this.statusTitle.setColor('#ef4444');
-        this.statusSub.setText(`처치한 산적: ${snap.enemiesDefeated}명  ·  R 키로 즉시 재시작`);
+        this.statusSub.setText(`제압한 산적: ${snap.enemiesNeutralized}명  ·  R 키로 즉시 재시작`);
       } else {
         this.statusOverlay.setVisible(false);
       }
@@ -256,8 +320,11 @@ export class CombatHud implements IGameSystem {
 
   public destroy(): void {
     this.statusOverlay?.destroy(true);
+    this.heroNameText?.destroy();
     this.hpBarGfx?.destroy();
     this.hpText?.destroy();
+    this.specialBarGfx?.destroy();
+    this.specialLabel?.destroy();
     this.counterText?.destroy();
     this.comboText?.destroy();
   }

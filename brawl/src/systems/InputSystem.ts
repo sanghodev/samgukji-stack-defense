@@ -14,6 +14,10 @@ export interface MoveInputState {
   heavyAttackPressed: boolean;
   /** True on the frame Interact / Pick up / Throw (SPACE) was pressed */
   interactPressed: boolean;
+  /** True on the frame Special Ability (V) was pressed */
+  specialPressed: boolean;
+  /** True on the frame Switch Hero (TAB) was pressed */
+  switchHeroPressed: boolean;
   /** True on the frame the Combat Debug Panel toggle key (F2) was pressed */
   toggleCombatPanelPressed: boolean;
   /** True on the frame the HUD Debug overlay toggle key (F3) was pressed */
@@ -23,7 +27,8 @@ export interface MoveInputState {
 }
 
 /**
- * Handles smooth 8-direction movement (WASD + Arrows) and responsive combat/mayhem inputs (Z, X, SPACE, F2, F3, R).
+ * Handles smooth 8-direction movement (WASD + Arrows) and responsive combat/mayhem/special inputs
+ * (Z, X, V, SPACE, TAB, F2, F3, R).
  */
 export class InputSystem implements IGameSystem {
   public readonly id = 'input';
@@ -39,7 +44,9 @@ export class InputSystem implements IGameSystem {
     right: Phaser.Input.Keyboard.Key;
     z: Phaser.Input.Keyboard.Key;
     x: Phaser.Input.Keyboard.Key;
+    v: Phaser.Input.Keyboard.Key;
     space: Phaser.Input.Keyboard.Key;
+    tab: Phaser.Input.Keyboard.Key;
     r: Phaser.Input.Keyboard.Key;
     f2: Phaser.Input.Keyboard.Key;
     f3: Phaser.Input.Keyboard.Key;
@@ -48,6 +55,9 @@ export class InputSystem implements IGameSystem {
   public init(ctx: SystemContext): void {
     const kb = ctx.scene.input.keyboard;
     if (!kb) return;
+
+    kb.addCapture(Phaser.Input.Keyboard.KeyCodes.TAB);
+    kb.addCapture(Phaser.Input.Keyboard.KeyCodes.SPACE);
 
     this.keys = {
       w: kb.addKey(Phaser.Input.Keyboard.KeyCodes.W),
@@ -60,7 +70,9 @@ export class InputSystem implements IGameSystem {
       right: kb.addKey(Phaser.Input.Keyboard.KeyCodes.RIGHT),
       z: kb.addKey(Phaser.Input.Keyboard.KeyCodes.Z),
       x: kb.addKey(Phaser.Input.Keyboard.KeyCodes.X),
+      v: kb.addKey(Phaser.Input.Keyboard.KeyCodes.V),
       space: kb.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE),
+      tab: kb.addKey(Phaser.Input.Keyboard.KeyCodes.TAB),
       r: kb.addKey(Phaser.Input.Keyboard.KeyCodes.R),
       f2: kb.addKey(Phaser.Input.Keyboard.KeyCodes.F2),
       f3: kb.addKey(Phaser.Input.Keyboard.KeyCodes.F3),
@@ -76,6 +88,8 @@ export class InputSystem implements IGameSystem {
         lightAttackPressed: false,
         heavyAttackPressed: false,
         interactPressed: false,
+        specialPressed: false,
+        switchHeroPressed: false,
         toggleCombatPanelPressed: false,
         toggleDebugPressed: false,
         restartPressed: false,
@@ -101,6 +115,8 @@ export class InputSystem implements IGameSystem {
       lightAttackPressed: Phaser.Input.Keyboard.JustDown(this.keys.z),
       heavyAttackPressed: Phaser.Input.Keyboard.JustDown(this.keys.x),
       interactPressed: Phaser.Input.Keyboard.JustDown(this.keys.space),
+      specialPressed: Phaser.Input.Keyboard.JustDown(this.keys.v),
+      switchHeroPressed: Phaser.Input.Keyboard.JustDown(this.keys.tab),
       toggleCombatPanelPressed: Phaser.Input.Keyboard.JustDown(this.keys.f2),
       toggleDebugPressed: Phaser.Input.Keyboard.JustDown(this.keys.f3),
       restartPressed: Phaser.Input.Keyboard.JustDown(this.keys.r),

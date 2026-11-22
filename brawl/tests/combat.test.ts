@@ -215,3 +215,61 @@ test('Surface hazard slipping requires running speed and is bounded', () => {
   assert.equal(evaluateSlipTrigger(140, 0.8, 0.016, 0.99), false);
 });
 
+// ==================== STEP 4 FEAR, TRIP & CAMERA GAG TESTS ====================
+import {
+  classifyFearState,
+  computeFearGain,
+  evaluateCameraGagEligibility,
+  evaluateRunningTrip,
+} from '../src/core/FearAndGagMath.ts';
+
+test('Fear state classification applies hysteresis to prevent rapid flickering', () => {
+  // Panic threshold = 50 -> crossing 52 enters PANICKING
+  const s1 = classifyFearState(52, 'FRIGHTENED', 50);
+  assert.equal(s1, 'PANICKING');
+
+  // Slight drop to 47 stays PANICKING due to hysteresis band (50 - 6 = 44)
+  const s2 = classifyFearState(47, 'PANICKING', 50);
+  assert.equal(s2, 'PANICKING');
+
+  // Dropping below hysteresis band (42) cleanly transitions back to FRIGHTENED
+  const s3 = classifyFearState(42, 'PANICKING', 50);
+  assert.equal(s3, 'FRIGHTENED');
+});
+
+test('Cowardly bandits gain significantly more fear than Elite bandits from the same event', () => {
+  const cowardGain = computeFearGain(30, 1.85, 1.0, 22);
+  const eliteGain = computeFearGain(30, 0.22, 1.0, 95);
+  assert.ok(cowardGain > eliteGain * 10, `Expected cowardGain (${cowardGain}) >> eliteGain (${eliteGain})`);
+});
+
+test('Running trip never trips idle bandits and triggers for frantic/clumsy runners', () => {
+  assert.equal(evaluateRunningTrip(0, true, false, 2.3, 0.5, 0.016, 0.0), false);
+  assert.equal(evaluateRunningTrip(150, true, true, 2.3, 0.5, 0.05, 0.005), true);
+  assert.equal(evaluateRunningTrip(150, true, true, 2.3, 0.5, 0.05, 0.99), false);
+});
+
+test('Camera-glass gag enforces foreground trajectory, threshold, cooldown, and single-active limit', () => {
+  const base = {
+    enabled: true,
+    isAnyGagActive: false,
+    cooldownRemainingMs: 0,
+    enemyEligible: true,
+    launchSpeed: 480,
+    launchThreshold: 340,
+    vy: 180,
+    gagChance: 0.3,
+    roll01: 0.1,
+  };
+  assert.equal(evaluateCameraGagEligibility(base), true);
+  // Blocked when launched away from viewer (vy < 0)
+  assert.equal(evaluateCameraGagEligibility({ ...base, vy: -120 }), false);
+  // Blocked when another gag is already active
+  assert.equal(evaluateCameraGagEligibility({ ...base, isAnyGagActive: true }), false);
+  // Blocked during cooldown
+  assert.equal(evaluateCameraGagEligibility({ ...base, cooldownRemainingMs: 1200 }), false);
+  // Blocked when disabled in settings
+  assert.equal(evaluateCameraGagEligibility({ ...base, enabled: false }), false);
+});
+
+
