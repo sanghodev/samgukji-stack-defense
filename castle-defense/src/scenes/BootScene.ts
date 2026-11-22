@@ -13,7 +13,7 @@ interface StackAssetSpec {
 const STACK_SPECS: StackAssetSpec[] = [
   {
     key: 'castle_gate_stack',
-    path: 'assets/stacks/castle_gate_stack.png',
+    path: '../assets/stacks/castle_gate_stack.png',
     frameWidth: 64,
     frameHeight: 64,
     layers: 24,
@@ -21,7 +21,7 @@ const STACK_SPECS: StackAssetSpec[] = [
   },
   {
     key: 'barricade_stack',
-    path: 'assets/stacks/barricade_stack.png',
+    path: '../assets/stacks/barricade_stack.png',
     frameWidth: 32,
     frameHeight: 32,
     layers: 10,
@@ -29,7 +29,7 @@ const STACK_SPECS: StackAssetSpec[] = [
   },
   {
     key: 'sakura_tree_stack',
-    path: 'assets/stacks/sakura_tree_stack.png',
+    path: '../assets/stacks/sakura_tree_stack.png',
     frameWidth: 40,
     frameHeight: 40,
     layers: 18,
@@ -37,7 +37,7 @@ const STACK_SPECS: StackAssetSpec[] = [
   },
   {
     key: 'zhaoyun_stack',
-    path: 'assets/stacks/zhaoyun_stack.png',
+    path: '../assets/stacks/zhaoyun_stack.png',
     frameWidth: 24,
     frameHeight: 24,
     layers: 14,
@@ -45,7 +45,7 @@ const STACK_SPECS: StackAssetSpec[] = [
   },
   {
     key: 'bandit_stack',
-    path: 'assets/stacks/bandit_stack.png',
+    path: '../assets/stacks/bandit_stack.png',
     frameWidth: 20,
     frameHeight: 20,
     layers: 12,
@@ -65,25 +65,25 @@ export class BootScene extends Phaser.Scene {
 
   public preload(): void {
     // High-detail isometric Three Kingdoms fortress battlefield background
-    this.load.image('fortress_battlefield', 'assets/maps/fortress_battlefield.jpg');
+    this.load.image('fortress_battlefield', '../assets/maps/fortress_battlefield.jpg');
 
     // 8-direction Zhao Yun character spritesheet (idle/walk)
-    this.load.spritesheet('zhaoyun_8dir', 'assets/sprites/zhaoyun_8dir.png', {
+    this.load.spritesheet('zhaoyun_8dir', '../assets/sprites/zhaoyun_8dir.png', {
       frameWidth: 128,
       frameHeight: 128,
     });
     // 8-pose Zhao Yun action spritesheet (combo 1-3, whirlwind, guard, jump, air strike, dash)
-    this.load.spritesheet('zhaoyun_actions', 'assets/sprites/zhaoyun_actions.png', {
+    this.load.spritesheet('zhaoyun_actions', '../assets/sprites/zhaoyun_actions.png', {
       frameWidth: 160,
       frameHeight: 160,
     });
     // 4-frame Zhao Yun running cycle spritesheet
-    this.load.spritesheet('zhaoyun_run', 'assets/sprites/zhaoyun_run.png', {
+    this.load.spritesheet('zhaoyun_run', '../assets/sprites/zhaoyun_run.png', {
       frameWidth: 160,
       frameHeight: 160,
     });
     // 4-type 2-head chibi enemy & boss spritesheet (grunt, shield, raider, boss)
-    this.load.spritesheet('enemies_4types', 'assets/sprites/enemies_4types.png', {
+    this.load.spritesheet('enemies_4types', '../assets/sprites/enemies_4types.png', {
       frameWidth: 160,
       frameHeight: 160,
     });
