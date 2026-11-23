@@ -20,6 +20,10 @@ import {
   evaluateRunningTrip,
   FearState,
 } from '../core/FearAndGagMath';
+import {
+  EnemySkillKind,
+  pickEnemySkillForArchetype,
+} from '../core/HeroDefenseMath';
 import type { ChainReactionTier } from '../core/MayhemPhysics';
 import {
   clampToArena,
@@ -37,6 +41,8 @@ export type BanditState =
   | 'ATTACK_WINDUP'
   | 'ATTACK_ACTIVE'
   | 'ATTACK_RECOVERY'
+  | 'SKILL_WINDUP'
+  | 'SKILL_ACTIVE'
   | 'HURT'
   | 'KNOCKBACK'
   | 'KNOCKDOWN'
@@ -60,7 +66,17 @@ export interface BanditHitRequest {
 
 export interface BanditCallbacks {
   onAttackWhoosh: () => void;
+  onAttackSwing?: (bandit: Bandit, dirX: number, dirY: number, isHeavy: boolean) => void;
   onHitPlayer: (damage: number, dirX: number, dirY: number) => void;
+  onSkillCast?: (bandit: Bandit, skill: EnemySkillKind) => void;
+  onSkillHitArea?: (
+    bandit: Bandit,
+    skill: EnemySkillKind,
+    radius: number,
+    damage: number,
+    causesDizzy: boolean,
+  ) => void;
+  onThrowDagger?: (bandit: Bandit, dirX: number, dirY: number, damage: number) => void;
   onLanded: (bandit: Bandit, impactSpeed: number) => void;
   onDefeated: (bandit: Bandit) => void;
   onPanic: (bandit: Bandit) => void;
@@ -73,6 +89,7 @@ export interface BanditCallbacks {
 
 /**
  * Cute 2-head-tall bandit with 6 data-driven comedic personalities,
+ * grounded running & weapon-swing animation, higher-tier combat skills,
  * fear/panic hysteresis, fleeing, running trips, cover hiding/peeking,
  * surrendering, and rare camera-glass gag integration.
  */
@@ -116,6 +133,7 @@ export class Bandit {
   private readonly step4: Step4Tuning;
   private readonly callbacks: BanditCallbacks;
   private readonly shadow: Phaser.GameObjects.Ellipse;
+  private readonly skillTelegraphGfx: Phaser.GameObjects.Graphics;
   private readonly sprite: Phaser.GameObjects.Sprite;
   private readonly telegraphText: Phaser.GameObjects.Text;
   private readonly reactionText: Phaser.GameObjects.Text;
@@ -125,6 +143,7 @@ export class Bandit {
   private readonly hitTracker = new CombatHitTracker();
 
   private readonly baseSpriteScale: number;
+  private readonly animRowIndex: number;
   private stateTimerMs = 0;
   private walkPhase = 0;
   private flashTimerMs = 0;
@@ -138,6 +157,9 @@ export class Bandit {
   private surrenderTriggered = false;
   private personalAttackCooldownMs = 0;
   private sneakyRetreatMs = 0;
+  private activeSkill: EnemySkillKind = 'NONE';
+  private skillCooldownMs = 2600;
+  private skillPulseCount = 0;
 
   constructor(
     scene: Phaser.Scene,
@@ -156,7 +178,8 @@ export class Bandit {
     this.archetype = archetype;
     this.spec = BANDIT_ARCHETYPES[archetype];
     this.mass = this.spec.mass;
-    this.baseSpriteScale = 0.64 * this.spec.scaleMul;
+    this.baseSpriteScale = 0.68 * this.spec.scaleMul;
+    this.animRowIndex = this.resolveAnimRowIndex(archetype, slotIndex);
 
     this.x = spawnX;
     this.y = spawnY;
@@ -177,13 +200,15 @@ export class Bandit {
       0.42,
     );
 
-    const { tex, frame } = this.resolveBaseTextureAndFrame();
+    this.skillTelegraphGfx = scene.add.graphics();
+
+    const { tex, frame } = this.resolveAnimPose(0);
     this.sprite = scene.add.sprite(0, 4, tex, frame);
     this.sprite.setOrigin(0.5, 0.9);
     this.sprite.setScale(this.baseSpriteScale);
 
     this.telegraphText = scene.add
-      .text(0, -76, '!', {
+      .text(0, -78, '!', {
         fontFamily: 'Consolas, Menlo, monospace',
         fontSize: '24px',
         fontStyle: 'bold',
@@ -195,7 +220,7 @@ export class Bandit {
       .setVisible(false);
 
     this.reactionText = scene.add
-      .text(0, -72, '', {
+      .text(0, -76, '', {
         fontFamily: 'Malgun Gothic, Apple SD Gothic Neo, sans-serif',
         fontSize: '14px',
         fontStyle: 'bold',
@@ -207,7 +232,7 @@ export class Bandit {
       .setVisible(false);
 
     this.aiDebugText = scene.add
-      .text(0, -90, '', {
+      .text(0, -94, '', {
         fontFamily: 'Consolas, Menlo, monospace',
         fontSize: '10px',
         color: this.spec.badgeColor,
@@ -217,14 +242,15 @@ export class Bandit {
       .setOrigin(0.5)
       .setVisible(false);
 
-    this.hpBarBg = scene.add.rectangle(0, -64, 46, 6, 0x1c120c, 0.85).setVisible(false);
+    this.hpBarBg = scene.add.rectangle(0, -68, 46, 6, 0x1c120c, 0.85).setVisible(false);
     this.hpBarFill = scene.add
-      .rectangle(-22, -64, 44, 4, archetype === 'elite' ? 0xf59e0b : 0xef4444, 1)
+      .rectangle(-22, -68, 44, 4, archetype === 'elite' ? 0xf59e0b : 0xef4444, 1)
       .setOrigin(0, 0.5)
       .setVisible(false);
 
     this.container = scene.add.container(this.x, this.y, [
       this.shadow,
+      this.skillTelegraphGfx,
       this.sprite,
       this.hpBarBg,
       this.hpBarFill,
@@ -235,6 +261,7 @@ export class Bandit {
 
     this.state = 'APPROACH';
     this.personalAttackCooldownMs = 550 + slotIndex * 140;
+    this.skillCooldownMs = 2100 + (slotIndex % 5) * 480;
     this.syncVisuals();
   }
 
@@ -338,10 +365,14 @@ export class Bandit {
     // Transition immediately into panic/flee if standing/approaching!
     if (
       (this.fearState === 'PANICKING' || this.fearState === 'TERRIFIED') &&
-      (this.state === 'IDLE' || this.state === 'APPROACH' || this.state === 'ATTACK_WINDUP')
+      (this.state === 'IDLE' ||
+        this.state === 'APPROACH' ||
+        this.state === 'ATTACK_WINDUP' ||
+        this.state === 'SKILL_WINDUP')
     ) {
       coordinator.releaseAttackToken(this.id);
       this.telegraphText.setVisible(false);
+      this.clearSkillTelegraph();
       this.enterPanicState();
     }
   }
@@ -352,6 +383,7 @@ export class Bandit {
     this.fearState = 'TERRIFIED';
     coordinator.releaseAttackToken(this.id);
     this.telegraphText.setVisible(false);
+    this.clearSkillTelegraph();
     this.enterPanicState();
   }
 
@@ -365,6 +397,7 @@ export class Bandit {
     this.state = 'APPROACH';
     this.reactionText.setVisible(false);
     this.telegraphText.setVisible(false);
+    this.clearSkillTelegraph();
   }
 
   /** Prevents hiding/fleeing bandits from stalling wave completion indefinitely. */
@@ -415,6 +448,7 @@ export class Bandit {
     coordinator.releaseAttackToken(this.id);
     this.releaseCurrentCover();
     this.telegraphText.setVisible(false);
+    this.clearSkillTelegraph();
     this.isSlipping = false;
     this.chainDepth = 0;
 
@@ -532,6 +566,7 @@ export class Bandit {
     coordinator.releaseAttackToken(this.id);
     this.releaseCurrentCover();
     this.telegraphText.setVisible(false);
+    this.clearSkillTelegraph();
     this.isSlipping = false;
     this.chainDepth = nextChainDepth;
     this.chainCooldownMs = 260;
@@ -583,6 +618,7 @@ export class Bandit {
     coordinator.releaseAttackToken(this.id);
     this.releaseCurrentCover();
     this.telegraphText.setVisible(false);
+    this.clearSkillTelegraph();
     this.isSlipping = isSlip;
     this.slipImmunityMs = 2400;
     this.tripImmunityMs = 3000;
@@ -628,6 +664,7 @@ export class Bandit {
 
     if (this.flashTimerMs > 0) this.flashTimerMs = Math.max(0, this.flashTimerMs - deltaMs);
     if (this.personalAttackCooldownMs > 0) this.personalAttackCooldownMs = Math.max(0, this.personalAttackCooldownMs - deltaMs);
+    if (this.skillCooldownMs > 0) this.skillCooldownMs = Math.max(0, this.skillCooldownMs - deltaMs);
     if (this.chainCooldownMs > 0) this.chainCooldownMs = Math.max(0, this.chainCooldownMs - deltaMs);
     if (this.slipImmunityMs > 0) this.slipImmunityMs = Math.max(0, this.slipImmunityMs - deltaMs);
     if (this.tripImmunityMs > 0) this.tripImmunityMs = Math.max(0, this.tripImmunityMs - deltaMs);
@@ -696,6 +733,7 @@ export class Bandit {
       case 'IDLE': {
         this.reactionText.setVisible(false);
         this.telegraphText.setVisible(false);
+        this.clearSkillTelegraph();
         if (playerAlive) this.state = 'APPROACH';
         break;
       }
@@ -739,6 +777,9 @@ export class Bandit {
           this.vy = sep.y * 0.5;
           this.x += this.vx * dt;
           this.y += this.vy * dt;
+          if (Math.hypot(this.vx, this.vy) > 12) {
+            this.walkPhase += dt * 7;
+          }
         }
 
         // Clumsy bandits can occasionally stumble if turning sharply while running!
@@ -748,6 +789,44 @@ export class Bandit {
         const toPlayerY = playerY - this.y;
         const distPlayer = Math.hypot(toPlayerX, toPlayerY / PERSPECTIVE_CONFIG.verticalMoveRatio);
         if (Math.abs(toPlayerX) > 4) this.facingDirX = Math.sign(toPlayerX);
+
+        // Higher-tier enemies (Elite, Stubborn Veteran, Sneaky Assassin, Overconfident) cast combat skills!
+        if (this.skillCooldownMs <= 0 && this.fearState === 'CALM') {
+          const pickedSkill = pickEnemySkillForArchetype(this.archetype, distPlayer);
+          if (pickedSkill !== 'NONE') {
+            const needsToken = pickedSkill !== 'DAGGER_THROW' && this.archetype !== 'elite';
+            if (!needsToken || coordinator.requestAttackToken(this.id)) {
+              const dLen = Math.hypot(toPlayerX, toPlayerY) || 1;
+              this.attackDirX = toPlayerX / dLen;
+              this.attackDirY = toPlayerY / dLen;
+              this.vx = 0;
+              this.vy = 0;
+              this.activeSkill = pickedSkill;
+              this.skillPulseCount = 0;
+              this.state = 'SKILL_WINDUP';
+              this.stateTimerMs =
+                pickedSkill === 'GROUND_SLAM'
+                  ? 720
+                  : pickedSkill === 'WHIRLWIND'
+                    ? 620
+                    : pickedSkill === 'DASH_CLEAVE'
+                      ? 580
+                      : 480;
+              this.telegraphText.setVisible(true);
+              const shoutMap: Record<Exclude<EnemySkillKind, 'NONE'>, [string, string]> = {
+                WHIRLWIND: ['회오리 강타!', '#f87171'],
+                GROUND_SLAM: ['박살내주마!', '#fb923c'],
+                DASH_CLEAVE: ['돌격 베기!', '#facc15'],
+                DAGGER_THROW: ['표창 받아라!', '#e879f9'],
+              };
+              const [label, col] = shoutMap[pickedSkill];
+              this.reactionText.setText(label);
+              this.reactionText.setColor(col);
+              this.reactionText.setVisible(true);
+              break;
+            }
+          }
+        }
 
         if (
           distPlayer <= BANDIT_COMBAT_CONFIG.attackRange + 14 &&
@@ -774,6 +853,12 @@ export class Bandit {
           this.stateTimerMs = BANDIT_COMBAT_CONFIG.attackActiveMs;
           this.hitTracker.beginAttack();
           this.callbacks.onAttackWhoosh();
+          this.callbacks.onAttackSwing?.(
+            this,
+            this.attackDirX,
+            this.attackDirY,
+            this.archetype === 'elite',
+          );
         }
         break;
       }
@@ -817,6 +902,112 @@ export class Bandit {
         if (this.stateTimerMs <= 0) {
           this.state = 'ATTACK_RECOVERY';
           this.stateTimerMs = BANDIT_COMBAT_CONFIG.attackRecoveryMs;
+          coordinator.releaseAttackToken(this.id);
+        }
+        break;
+      }
+
+      case 'SKILL_WINDUP': {
+        this.stateTimerMs -= deltaMs;
+        this.drawSkillTelegraph();
+        if (this.stateTimerMs <= 0) {
+          this.telegraphText.setVisible(false);
+          this.skillTelegraphGfx.clear();
+          this.state = 'SKILL_ACTIVE';
+          this.hitTracker.beginAttack();
+          this.callbacks.onSkillCast?.(this, this.activeSkill);
+          this.stateTimerMs =
+            this.activeSkill === 'WHIRLWIND'
+              ? 520
+              : this.activeSkill === 'DASH_CLEAVE'
+                ? 360
+                : this.activeSkill === 'GROUND_SLAM'
+                  ? 260
+                  : 220;
+        }
+        break;
+      }
+
+      case 'SKILL_ACTIVE': {
+        this.stateTimerMs -= deltaMs;
+        const scale = getPerspectiveScale(this.y);
+
+        if (this.activeSkill === 'WHIRLWIND') {
+          // Rapid spinning cleave while drifting toward target!
+          const toX = playerX - this.x;
+          const toY = playerY - this.y;
+          const len = Math.hypot(toX, toY) || 1;
+          this.x += (toX / len) * 115 * scale * dt;
+          this.y += (toY / len) * 115 * PERSPECTIVE_CONFIG.verticalMoveRatio * scale * dt;
+          this.facingDirX = Math.floor(this.stateTimerMs / 95) % 2 === 0 ? 1 : -1;
+          if (this.skillPulseCount === 0 || (this.skillPulseCount === 1 && this.stateTimerMs <= 260)) {
+            this.skillPulseCount += 1;
+            this.callbacks.onSkillHitArea?.(this, 'WHIRLWIND', 124, 17, false);
+          }
+        } else if (this.activeSkill === 'GROUND_SLAM') {
+          if (this.skillPulseCount === 0) {
+            this.skillPulseCount = 1;
+            const isElite = this.archetype === 'elite';
+            this.callbacks.onSkillHitArea?.(
+              this,
+              'GROUND_SLAM',
+              isElite ? 132 : 102,
+              isElite ? 22 : 15,
+              isElite,
+            );
+          }
+        } else if (this.activeSkill === 'DASH_CLEAVE') {
+          const dashSpd = 385 * scale;
+          this.x += this.attackDirX * dashSpd * dt;
+          this.y += this.attackDirY * dashSpd * PERSPECTIVE_CONFIG.verticalMoveRatio * dt;
+          if (this.skillPulseCount === 0) {
+            this.skillPulseCount = 1;
+            this.callbacks.onAttackSwing?.(this, this.attackDirX, this.attackDirY, true);
+          }
+          if (playerAlive && this.hitTracker.canHit('player')) {
+            const res = check25DMeleeHit(
+              {
+                originX: this.x,
+                originY: this.y,
+                dirX: this.attackDirX,
+                dirY: this.attackDirY,
+                range: BANDIT_COMBAT_CONFIG.attackRange + 26,
+                halfWidth: BANDIT_COMBAT_CONFIG.attackHalfWidth + 14,
+                verticalRatio: PERSPECTIVE_CONFIG.verticalMoveRatio,
+              },
+              {
+                id: 'player',
+                x: playerX,
+                y: playerY,
+                radius: 20,
+                elevationZ: 0,
+                vulnerable: true,
+              },
+            );
+            if (res.hit) {
+              this.hitTracker.recordHit('player');
+              this.callbacks.onHitPlayer(
+                BANDIT_COMBAT_CONFIG.attackDamage * 1.45,
+                this.attackDirX,
+                this.attackDirY,
+              );
+            }
+          }
+        } else if (this.activeSkill === 'DAGGER_THROW') {
+          if (this.skillPulseCount === 0) {
+            this.skillPulseCount = 1;
+            this.callbacks.onThrowDagger?.(this, this.attackDirX, this.attackDirY, 13);
+          }
+        }
+
+        if (this.stateTimerMs <= 0) {
+          this.activeSkill = 'NONE';
+          this.skillCooldownMs =
+            this.archetype === 'elite'
+              ? 4200 + Math.random() * 1800
+              : 5200 + Math.random() * 2400;
+          this.state = 'ATTACK_RECOVERY';
+          this.stateTimerMs = 340;
           coordinator.releaseAttackToken(this.id);
         }
         break;
@@ -1081,7 +1272,43 @@ export class Bandit {
     this.syncVisuals();
   }
 
+  private clearSkillTelegraph(): void {
+    this.activeSkill = 'NONE';
+    this.skillTelegraphGfx.clear();
+  }
+
+  private drawSkillTelegraph(): void {
+    this.skillTelegraphGfx.clear();
+    if (this.activeSkill === 'NONE') return;
+    const pulse = 0.55 + Math.sin(performance.now() * 0.025) * 0.25;
+
+    if (this.activeSkill === 'WHIRLWIND' || this.activeSkill === 'GROUND_SLAM') {
+      const isWhirl = this.activeSkill === 'WHIRLWIND';
+      const rad = this.archetype === 'elite' ? 128 : 102;
+      const col = isWhirl ? 0xef4444 : 0xf97316;
+      this.skillTelegraphGfx.fillStyle(col, 0.18 * pulse);
+      this.skillTelegraphGfx.fillEllipse(0, 0, rad * 1.9, rad * 1.12);
+      this.skillTelegraphGfx.lineStyle(3.5, col, 0.9 * pulse);
+      this.skillTelegraphGfx.strokeEllipse(0, 0, rad * 1.9, rad * 1.12);
+    } else if (this.activeSkill === 'DASH_CLEAVE') {
+      const len = 185;
+      const ex = this.attackDirX * len;
+      const ey = this.attackDirY * len * PERSPECTIVE_CONFIG.verticalMoveRatio;
+      this.skillTelegraphGfx.lineStyle(22, 0xef4444, 0.24 * pulse);
+      this.skillTelegraphGfx.lineBetween(0, 0, ex, ey);
+      this.skillTelegraphGfx.lineStyle(4, 0xfacc15, 0.92 * pulse);
+      this.skillTelegraphGfx.lineBetween(0, 0, ex, ey);
+    } else if (this.activeSkill === 'DAGGER_THROW') {
+      const len = 240;
+      const ex = this.attackDirX * len;
+      const ey = this.attackDirY * len * PERSPECTIVE_CONFIG.verticalMoveRatio;
+      this.skillTelegraphGfx.lineStyle(3, 0xe879f9, 0.85 * pulse);
+      this.skillTelegraphGfx.lineBetween(0, -24, ex, ey - 24);
+    }
+  }
+
   private enterPanicState(): void {
+    this.clearSkillTelegraph();
     this.state = 'FLEE';
     this.stateTimerMs = 1750 + Math.random() * 650;
     this.reactionText.setText(this.archetype === 'coward' ? '살려줘!!' : '도망쳐!');
@@ -1101,6 +1328,7 @@ export class Bandit {
   private enterSurrendered(coordinator: CombatCoordinator): void {
     coordinator.releaseAttackToken(this.id);
     this.releaseCurrentCover();
+    this.clearSkillTelegraph();
     this.state = 'SURRENDERED';
     this.vx = 0;
     this.vy = 0;
@@ -1191,6 +1419,7 @@ export class Bandit {
 
   private enterDefeated(launchVz: number): void {
     this.releaseCurrentCover();
+    this.clearSkillTelegraph();
     this.state = 'DEFEATED';
     this.stateTimerMs = 820;
     this.vz = launchVz;
@@ -1216,6 +1445,39 @@ export class Bandit {
       const ratio = Phaser.Math.Clamp(this.hp / Math.max(1, this.maxHp), 0, 1);
       this.hpBarFill.width = Math.max(2, Math.round(44 * ratio));
     }
+  }
+
+  /**
+   * Maps each bandit archetype to its dedicated row in `bandit_anim_sheet` (5 rows × 6 cols):
+   * 0=Sword Bandit, 1=Club Bandit, 2=Horned Spiked-Mace Elite, 3=Red-Scarf Ninja Assassin, 4=Shield & Sabre Veteran
+   */
+  private resolveAnimRowIndex(archetype: BanditArchetype, slotIndex: number): number {
+    switch (archetype) {
+      case 'clumsy':
+        return 1;
+      case 'elite':
+        return 2;
+      case 'sneaky':
+        return 3;
+      case 'stubborn':
+        return 4;
+      case 'overconfident':
+        return slotIndex % 2 === 0 ? 0 : 1;
+      case 'coward':
+      default:
+        return 0;
+    }
+  }
+
+  /**
+   * Resolves a frame column (0=IDLE, 1..3=RUN_A/B/C, 4=ATTACK_WINDUP, 5=ATTACK_SWING)
+   * on `bandit_anim_sheet`, falling back gracefully if needed.
+   */
+  private resolveAnimPose(col: number): { tex: string; frame: number } {
+    if (this.scene.textures.exists('bandit_anim_sheet')) {
+      return { tex: 'bandit_anim_sheet', frame: this.animRowIndex * 6 + col };
+    }
+    return this.resolveBaseTextureAndFrame();
   }
 
   private resolveBaseTextureAndFrame(): { tex: string; frame: number } {
@@ -1252,12 +1514,20 @@ export class Bandit {
     this.container.setDepth(getDepthOrder(this.y));
 
     const hasVaried = this.scene.textures.exists('bandits_varied');
-    const base = this.resolveBaseTextureAndFrame();
+    const idlePose = this.resolveAnimPose(0);
 
     this.sprite.setFlipX(this.facingDirX < 0);
 
     if (this.flashTimerMs > 0) {
       this.sprite.setTintFill(0xffffff);
+    } else if (this.state === 'SKILL_WINDUP') {
+      const glow =
+        this.activeSkill === 'DAGGER_THROW'
+          ? 0xf0abfc
+          : this.activeSkill === 'DASH_CLEAVE'
+            ? 0xfde047
+            : 0xfca5a5;
+      this.sprite.setTint(glow);
     } else if (this.state === 'ATTACK_WINDUP') {
       this.sprite.setTint(0xffb4a2);
     } else if (!hasVaried && this.spec.tintColor !== null) {
@@ -1273,23 +1543,39 @@ export class Bandit {
 
     switch (this.state) {
       case 'APPROACH': {
-        this.setPoseTexture(base.tex, base.frame);
-        spriteY = 4 - Math.abs(Math.sin(this.walkPhase)) * 4.5;
-        rot = Math.cos(this.walkPhase) * 0.06;
+        // Real grounded running stride cycle (NO bouncy hopping!)
+        const isRunning = this.groundSpeed > 15;
+        if (isRunning) {
+          const strideCols = [1, 2, 3, 2];
+          const stepIdx = Math.floor(this.walkPhase * 1.15) % strideCols.length;
+          const pose = this.resolveAnimPose(strideCols[stepIdx]);
+          this.setPoseTexture(pose.tex, pose.frame);
+          spriteY = 4;
+          rot = 0;
+        } else {
+          this.setPoseTexture(idlePose.tex, idlePose.frame);
+          spriteY = 4;
+          rot = 0;
+        }
         break;
       }
       case 'FLEE':
       case 'MOVING_TO_COVER': {
-        // Wide-eyed terrified sweat-drop panic sprint pose!
+        // Grounded frantic sprint with terrified sweat-drop expression
         if (hasVaried) this.setPoseTexture('bandits_varied', 1);
-        else this.setPoseTexture(base.tex, base.frame);
-        spriteY = 4 - Math.abs(Math.sin(this.walkPhase)) * 7;
-        rot = Math.sin(this.walkPhase) * 0.14;
+        else {
+          const strideCols = [1, 2, 3, 2];
+          const stepIdx = Math.floor(this.walkPhase * 1.4) % strideCols.length;
+          const pose = this.resolveAnimPose(strideCols[stepIdx]);
+          this.setPoseTexture(pose.tex, pose.frame);
+        }
+        spriteY = 4;
+        rot = this.facingDirX * 0.08 + Math.sin(this.walkPhase) * 0.04;
         break;
       }
       case 'HIDING': {
         if (hasVaried) this.setPoseTexture('bandits_varied', 1);
-        else this.setPoseTexture(base.tex, base.frame);
+        else this.setPoseTexture(idlePose.tex, idlePose.frame);
         const tremble = Math.sin(performance.now() * 0.03) * 1.5;
         spriteY = 14;
         sx = this.baseSpriteScale * 1.04;
@@ -1299,7 +1585,7 @@ export class Bandit {
       }
       case 'PEEKING': {
         if (hasVaried) this.setPoseTexture('bandits_varied', 1);
-        else this.setPoseTexture(base.tex, base.frame);
+        else this.setPoseTexture(idlePose.tex, idlePose.frame);
         spriteY = 6;
         sx = this.baseSpriteScale * 0.96;
         sy = this.baseSpriteScale * 0.92;
@@ -1321,23 +1607,31 @@ export class Bandit {
         this.sprite.x = Math.sin(performance.now() * 0.026) * 1.6;
         break;
       }
-      case 'ATTACK_WINDUP': {
-        this.setPoseTexture(base.tex, base.frame);
-        rot = -this.facingDirX * 0.24;
-        sx = this.baseSpriteScale * 1.1;
-        sy = this.baseSpriteScale * 0.9;
+      case 'ATTACK_WINDUP':
+      case 'SKILL_WINDUP': {
+        // Real weapon-raised windup frame!
+        const windupPose = this.resolveAnimPose(4);
+        this.setPoseTexture(windupPose.tex, windupPose.frame);
+        const isSkill = this.state === 'SKILL_WINDUP';
+        rot = -this.facingDirX * (isSkill ? 0.14 : 0.08);
+        sx = this.baseSpriteScale * (isSkill ? 1.08 : 1.04);
+        sy = this.baseSpriteScale * (isSkill ? 0.96 : 0.98);
         break;
       }
-      case 'ATTACK_ACTIVE': {
-        this.setPoseTexture(base.tex, base.frame);
-        rot = this.facingDirX * 0.22;
-        sx = this.baseSpriteScale * 1.14;
-        sy = this.baseSpriteScale * 0.92;
+      case 'ATTACK_ACTIVE':
+      case 'SKILL_ACTIVE': {
+        // Real weapon-swinging follow-through frame!
+        const swingPose = this.resolveAnimPose(5);
+        this.setPoseTexture(swingPose.tex, swingPose.frame);
+        const isSkill = this.state === 'SKILL_ACTIVE';
+        rot = this.facingDirX * (isSkill ? 0.16 : 0.1);
+        sx = this.baseSpriteScale * (isSkill ? 1.12 : 1.06);
+        sy = this.baseSpriteScale * 0.96;
         break;
       }
       case 'HURT': {
         if (hasVaried) this.setPoseTexture('bandits_varied', 5);
-        else this.setPoseTexture(base.tex, base.frame);
+        else this.setPoseTexture(idlePose.tex, idlePose.frame);
         rot = -this.facingDirX * 0.22;
         sx = this.baseSpriteScale * 0.94;
         sy = this.baseSpriteScale * 1.1;
@@ -1383,7 +1677,7 @@ export class Bandit {
         break;
       }
       case 'RECOVER': {
-        this.setPoseTexture(base.tex, base.frame);
+        this.setPoseTexture(idlePose.tex, idlePose.frame);
         const p = 1 - Phaser.Math.Clamp(this.stateTimerMs / BANDIT_COMBAT_CONFIG.recoverDurationMs, 0, 1);
         rot = this.tumbleSpinDir * 0.35 * (1 - p);
         spriteY = Phaser.Math.Linear(10, 4, p);
@@ -1392,7 +1686,7 @@ export class Bandit {
         break;
       }
       default:
-        this.setPoseTexture(base.tex, base.frame);
+        this.setPoseTexture(idlePose.tex, idlePose.frame);
         break;
     }
 
@@ -1408,7 +1702,7 @@ export class Bandit {
     this.shadow.setAlpha(0.4 * shScale);
 
     if (this.state !== 'KNOCKDOWN') {
-      this.reactionText.y = spriteY - 70;
+      this.reactionText.y = spriteY - 76;
     }
 
     // Optional AI state & fear debug readout

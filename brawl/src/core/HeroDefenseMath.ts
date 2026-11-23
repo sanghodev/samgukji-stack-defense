@@ -122,6 +122,37 @@ export function getPowerUpVisualTier(treasureCount: number): 0 | 1 | 2 | 3 {
 /**
  * Returns the 16-bit broken_wreckage frame indices to spawn for a destroyed prop kind.
  */
+export type EnemySkillKind = 'NONE' | 'WHIRLWIND' | 'GROUND_SLAM' | 'DASH_CLEAVE' | 'DAGGER_THROW';
+
+/**
+ * Selects a signature enemy combat skill for higher-tier bandit archetypes
+ * based on target distance so Elites, Veterans, Assassins, and Captains feel threatening & distinct!
+ */
+export function pickEnemySkillForArchetype(
+  archetype: string,
+  distToHero: number,
+  rng = Math.random,
+): EnemySkillKind {
+  switch (archetype) {
+    case 'elite':
+      if (distToHero <= 165) {
+        return rng() < 0.55 ? 'WHIRLWIND' : 'GROUND_SLAM';
+      }
+      return 'GROUND_SLAM';
+    case 'stubborn':
+      if (distToHero >= 70 && distToHero <= 230) return 'DASH_CLEAVE';
+      return 'NONE';
+    case 'sneaky':
+      if (distToHero >= 115 && distToHero <= 340) return 'DAGGER_THROW';
+      return 'NONE';
+    case 'overconfident':
+      if (distToHero <= 135 && rng() < 0.45) return 'GROUND_SLAM';
+      return 'NONE';
+    default:
+      return 'NONE';
+  }
+}
+
 export function getWreckageFramesForKind(
   kind: EnvObjectKind,
   rng = Math.random,
@@ -129,21 +160,21 @@ export function getWreckageFramesForKind(
   switch (kind) {
     case 'table':
       return [
-        { frame: 0, scale: 0.48 }, // Broken table top snapped in half
-        { frame: 1, scale: 0.42 }, // Broken legs & wood planks pile
-        { frame: 7, scale: 0.28 }, // Cracked porcelain bowl!
+        { frame: 0, scale: 0.94 }, // Broken table top snapped in half
+        { frame: 1, scale: 0.82 }, // Broken legs & wood planks pile
+        { frame: 7, scale: 0.48 }, // Cracked porcelain bowl!
       ];
     case 'barrel_water':
     case 'barrel_empty':
-      return [{ frame: 2, scale: 0.43 }]; // Smashed barrel staves & iron hoop
+      return [{ frame: 2, scale: 0.72 }]; // Smashed barrel staves & iron hoop
     case 'ceramic_jar':
       return [
-        { frame: 3, scale: 0.40 }, // Cracked spilling wine jar
-        { frame: 4, scale: 0.34 }, // Scattered ceramic shards
+        { frame: 3, scale: 0.68 }, // Cracked spilling wine jar
+        { frame: 4, scale: 0.56 }, // Scattered ceramic shards
       ];
     case 'fruit_basket':
       return [
-        { frame: rng() < 0.5 ? 5 : 6, scale: 0.39 }, // Overturned apple basket OR dumpling steamer!
+        { frame: rng() < 0.5 ? 5 : 6, scale: 0.66 }, // Overturned apple basket OR dumpling steamer!
       ];
   }
 }

@@ -42,8 +42,12 @@ export class BootScene extends Phaser.Scene {
       frameHeight: 160,
     });
 
-    // Varied Bandits + comedic poses, legacy 4-type enemies, and Bandit Chief Boss
+    // Varied Bandits + comedic poses, 2-head animated run/swing sheet, legacy 4-type enemies, and Boss
     this.load.spritesheet('bandits_varied', '../assets/sprites/bandits_varied.png', {
+      frameWidth: 160,
+      frameHeight: 160,
+    });
+    this.load.spritesheet('bandit_anim_sheet', '../assets/sprites/bandit_anim_sheet.png', {
       frameWidth: 160,
       frameHeight: 160,
     });

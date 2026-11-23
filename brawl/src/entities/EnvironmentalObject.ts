@@ -118,11 +118,11 @@ export class EnvironmentalObject {
     this.bodyGfx = scene.add.graphics();
     if (scene.textures.exists('mayhem_props')) {
       const frameMap: Record<EnvObjectKind, { frame: number; scale: number; yOff: number }> = {
-        table: { frame: 0, scale: 0.50, yOff: 5 },
-        barrel_water: { frame: 1, scale: 0.43, yOff: 5 },
-        barrel_empty: { frame: 2, scale: 0.43, yOff: 5 },
-        ceramic_jar: { frame: 3, scale: 0.40, yOff: 5 },
-        fruit_basket: { frame: Math.random() < 0.5 ? 4 : 5, scale: 0.38, yOff: 5 },
+        table: { frame: 0, scale: 1.04, yOff: 8 },
+        barrel_water: { frame: 1, scale: 0.72, yOff: 6 },
+        barrel_empty: { frame: 2, scale: 0.72, yOff: 6 },
+        ceramic_jar: { frame: 3, scale: 0.68, yOff: 6 },
+        fruit_basket: { frame: Math.random() < 0.5 ? 4 : 5, scale: 0.66, yOff: 6 },
       };
       const cfg = frameMap[kind];
       this.bodySprite = scene.add
@@ -146,7 +146,7 @@ export class EnvironmentalObject {
       })
       .setOrigin(0.5);
     this.promptBadge = scene.add
-      .container(0, -56, [pillBg, pillTxt])
+      .container(0, kind === 'table' ? -92 : -76, [pillBg, pillTxt])
       .setVisible(false);
 
     const children: Phaser.GameObjects.GameObject[] = [this.shadow, this.bodyGfx];
@@ -185,7 +185,7 @@ export class EnvironmentalObject {
 
   public getCoverSpot(): Point2D {
     // Positioned slightly behind the cover object in 2.5D depth so the hiding bandit depth-sorts behind it!
-    return clampToArena(this.x, this.y - 22, 18);
+    return clampToArena(this.x, this.y - 24, 18);
   }
 
   public claimCover(occupantId: string): boolean {
@@ -229,7 +229,7 @@ export class EnvironmentalObject {
     this.vx = 0;
     this.vy = 0;
     this.vz = 0;
-    this.elevationZ = this.spec.kind === 'table' ? 86 : 82;
+    this.elevationZ = this.spec.kind === 'table' ? 58 : 54;
     this.spinAngle = 0;
     this.spinSpeed = 0;
     this.promptBadge.setVisible(false);
@@ -242,7 +242,7 @@ export class EnvironmentalObject {
     this.prevY = this.y;
     this.x = carrierX;
     this.y = carrierY;
-    const baseLift = this.spec.kind === 'table' ? 86 : 82;
+    const baseLift = this.spec.kind === 'table' ? 58 : 54;
     this.elevationZ = baseLift + bobOffset;
     this.syncVisuals(getDepthOrder(carrierY) + 6);
   }

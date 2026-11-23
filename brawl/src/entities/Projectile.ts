@@ -10,6 +10,7 @@ import {
 export interface ProjectileConfig {
   id: string;
   ownerHeroId: string;
+  isEnemyProjectile?: boolean;
   x: number;
   y: number;
   dirX: number;
@@ -26,13 +27,15 @@ export interface ProjectileConfig {
 }
 
 /**
- * True 2.5D world-space projectile (Huang Zhong's arrows & Guan Yu's green wind blades).
+ * True 2.5D world-space projectile (Huang Zhong's arrows, Guan Yu's green wind blades,
+ * and Sneaky Assassin's thrown daggers).
  * Tracks prevX/prevY for swept collision so fast projectiles never tunnel and only hit
  * targets in their actual 2.5D depth lane.
  */
 export class Projectile {
   public readonly id: string;
   public readonly ownerHeroId: string;
+  public readonly isEnemyProjectile: boolean;
   public readonly hitTracker = new CombatHitTracker();
   public readonly damage: number;
   public readonly knockbackForce: number;
@@ -59,6 +62,7 @@ export class Projectile {
   constructor(scene: Phaser.Scene, cfg: ProjectileConfig) {
     this.id = cfg.id;
     this.ownerHeroId = cfg.ownerHeroId;
+    this.isEnemyProjectile = Boolean(cfg.isEnemyProjectile);
     this.damage = cfg.damage;
     this.knockbackForce = cfg.knockbackForce;
     this.launchVz = cfg.launchVz;
@@ -79,21 +83,25 @@ export class Projectile {
     this.vy = this.dirY * cfg.speed * PERSPECTIVE_CONFIG.verticalMoveRatio;
 
     this.shadow = scene.add.ellipse(0, 2, 26, 7, 0x1a120b, 0.32);
+    const isDagger = cfg.textureKey === 'enemy_dagger';
     if (scene.textures.exists('combat_vfx')) {
       const isWind = cfg.textureKey === 'wind_blade_projectile';
       this.sprite = scene.add.image(0, -28, 'combat_vfx', isWind ? 1 : 3);
-      this.sprite.setScale(isWind ? 0.62 : cfg.penetrating ? 0.56 : 0.44);
+      this.sprite.setScale(isWind ? 0.62 : isDagger ? 0.42 : cfg.penetrating ? 0.56 : 0.44);
+      if (isDagger) {
+        this.sprite.setTint(cfg.tint ?? 0xf43f5e);
+      }
     } else {
-      this.sprite = scene.add.image(0, -26, cfg.textureKey ?? 'arrow_projectile');
+      this.sprite = scene.add.image(0, -26, isDagger ? 'arrow_projectile' : (cfg.textureKey ?? 'arrow_projectile'));
       if (cfg.penetrating) {
         this.sprite.setScale(1.35, 1.35);
+      }
+      if (cfg.tint) {
+        this.sprite.setTint(cfg.tint);
       }
     }
     this.sprite.setOrigin(0.5);
     this.sprite.setRotation(Math.atan2(this.vy, this.vx));
-    if (cfg.tint && !scene.textures.exists('combat_vfx')) {
-      this.sprite.setTint(cfg.tint);
-    }
 
     this.container = scene.add.container(this.x, this.y, [this.shadow, this.sprite]);
     this.hitTracker.beginAttack();

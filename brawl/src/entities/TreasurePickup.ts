@@ -32,7 +32,7 @@ export class TreasurePickup {
     this.ring.strokeEllipse(0, 4, 46, 18);
 
     this.sprite = scene.textures.exists('mayhem_props')
-      ? scene.add.image(0, -18, 'mayhem_props', 6).setOrigin(0.5).setScale(0.42)
+      ? scene.add.image(0, -24, 'mayhem_props', 6).setOrigin(0.5).setScale(0.60)
       : scene.add.image(0, -18, 'treasure_chest_icon').setOrigin(0.5);
     this.label = scene.add
       .text(0, -44, `✨ ${labelKr}`, {

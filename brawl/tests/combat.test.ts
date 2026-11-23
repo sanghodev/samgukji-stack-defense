@@ -665,6 +665,7 @@ import {
   getHeroSpecialPoseFrames,
   getPowerUpVisualTier,
   getWreckageFramesForKind,
+  pickEnemySkillForArchetype,
   resolveHeroIncomingHit,
 } from '../src/core/HeroDefenseMath.ts';
 
@@ -728,6 +729,18 @@ test('Treasure Power-Up visual tiers, special pose frames, and wreckage frame ma
   assert.equal(getWreckageFramesForKind('barrel_water')[0].frame, 2);
   assert.equal(getWreckageFramesForKind('fruit_basket', () => 0.2)[0].frame, 5);
   assert.equal(getWreckageFramesForKind('fruit_basket', () => 0.8)[0].frame, 6);
+});
+
+test('Higher-tier bandit archetypes select distinct combat skills by range while cowards stay basic', () => {
+  assert.equal(pickEnemySkillForArchetype('elite', 120, () => 0.2), 'WHIRLWIND');
+  assert.equal(pickEnemySkillForArchetype('elite', 120, () => 0.8), 'GROUND_SLAM');
+  assert.equal(pickEnemySkillForArchetype('elite', 240, () => 0.2), 'GROUND_SLAM');
+  assert.equal(pickEnemySkillForArchetype('stubborn', 150), 'DASH_CLEAVE');
+  assert.equal(pickEnemySkillForArchetype('stubborn', 40), 'NONE');
+  assert.equal(pickEnemySkillForArchetype('sneaky', 210), 'DAGGER_THROW');
+  assert.equal(pickEnemySkillForArchetype('sneaky', 70), 'NONE');
+  assert.equal(pickEnemySkillForArchetype('overconfident', 110, () => 0.1), 'GROUND_SLAM');
+  assert.equal(pickEnemySkillForArchetype('coward', 100, () => 0.1), 'NONE');
 });
 
 

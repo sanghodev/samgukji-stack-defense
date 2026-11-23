@@ -1563,77 +1563,104 @@ export class BrawlScene extends Phaser.Scene {
         continue;
       }
 
-      // Swept 2.5D collision vs Bandits
-      for (const bandit of this.bandits) {
-        if (!bandit.isVulnerable) continue;
-        if (!proj.hitTracker.canHit(bandit.id)) continue;
+      // Enemy projectiles (e.g., Sneaky Assassin's thrown daggers) hit heroes & props!
+      if (proj.isEnemyProjectile) {
+        for (const hero of this.heroes) {
+          if (hero.isDefeated) continue;
+          if (!proj.hitTracker.canHit(hero.id)) continue;
 
-        const hit = sweptCircleHit25D(
-          proj.prevX,
-          proj.prevY,
-          proj.x,
-          proj.y,
-          proj.radius,
-          bandit.x,
-          bandit.y,
-          bandit.collisionRadius,
-          PERSPECTIVE_CONFIG.verticalMoveRatio,
-        );
-        if (!hit.hit) continue;
+          const hit = sweptCircleHit25D(
+            proj.prevX,
+            proj.prevY,
+            proj.x,
+            proj.y,
+            proj.radius,
+            hero.x,
+            hero.y,
+            hero.collisionRadius,
+            PERSPECTIVE_CONFIG.verticalMoveRatio,
+          );
+          if (!hit.hit) continue;
 
-        proj.hitTracker.recordHit(bandit.id);
-        const applied = bandit.takeHit(
-          {
-            damage: proj.damage,
-            dirX: proj.dirX,
-            dirY: proj.dirY,
-            knockbackForce: proj.knockbackForce,
-            launchVz: proj.launchVz,
-            isHeavy: proj.penetrating,
-          },
-          this.coordinator,
-        );
-        if (!applied) continue;
-
-        this.comboHits += 1;
-        this.comboDecayMs = 2200;
-        this.audio.playArrowHit();
-        this.audio.playEnemyHurt(proj.penetrating);
-        this.vfx.spawnHitImpact(
-          bandit.x,
-          bandit.y,
-          bandit.elevationZ,
-          proj.dirX,
-          proj.dirY,
-          proj.penetrating ? 'LIGHT_3' : 'LIGHT_1',
-          proj.damage,
-        );
-
-        if (!proj.penetrating) {
+          proj.hitTracker.recordHit(hero.id);
+          hero.takeDamage(proj.damage, proj.dirX, proj.dirY);
+          this.audio.playArrowHit();
           proj.readyForRemoval = true;
           break;
         }
-      }
+      } else {
+        // Swept 2.5D collision vs Bandits
+        for (const bandit of this.bandits) {
+          if (!bandit.isVulnerable) continue;
+          if (!proj.hitTracker.canHit(bandit.id)) continue;
 
-      // Swept 2.5D collision vs Bandit Chief Boss!
-      if (!proj.readyForRemoval && this.boss && this.boss.isAlive && proj.hitTracker.canHit(this.boss.id)) {
-        const hit = sweptCircleHit25D(
-          proj.prevX,
-          proj.prevY,
-          proj.x,
-          proj.y,
-          proj.radius,
-          this.boss.x,
-          this.boss.y,
-          this.boss.collisionRadius,
-          PERSPECTIVE_CONFIG.verticalMoveRatio,
-        );
-        if (hit.hit) {
-          proj.hitTracker.recordHit(this.boss.id);
-          this.damageBoss(proj.damage, proj.dirX, proj.dirY, proj.knockbackForce, false);
+          const hit = sweptCircleHit25D(
+            proj.prevX,
+            proj.prevY,
+            proj.x,
+            proj.y,
+            proj.radius,
+            bandit.x,
+            bandit.y,
+            bandit.collisionRadius,
+            PERSPECTIVE_CONFIG.verticalMoveRatio,
+          );
+          if (!hit.hit) continue;
+
+          proj.hitTracker.recordHit(bandit.id);
+          const applied = bandit.takeHit(
+            {
+              damage: proj.damage,
+              dirX: proj.dirX,
+              dirY: proj.dirY,
+              knockbackForce: proj.knockbackForce,
+              launchVz: proj.launchVz,
+              isHeavy: proj.penetrating,
+            },
+            this.coordinator,
+          );
+          if (!applied) continue;
+
+          this.comboHits += 1;
+          this.comboDecayMs = 2200;
           this.audio.playArrowHit();
+          this.audio.playEnemyHurt(proj.penetrating);
+          this.vfx.spawnHitImpact(
+            bandit.x,
+            bandit.y,
+            bandit.elevationZ,
+            proj.dirX,
+            proj.dirY,
+            proj.penetrating ? 'LIGHT_3' : 'LIGHT_1',
+            proj.damage,
+          );
+
           if (!proj.penetrating) {
             proj.readyForRemoval = true;
+            break;
+          }
+        }
+
+        // Swept 2.5D collision vs Bandit Chief Boss!
+        if (!proj.readyForRemoval && this.boss && this.boss.isAlive && proj.hitTracker.canHit(this.boss.id)) {
+          const hit = sweptCircleHit25D(
+            proj.prevX,
+            proj.prevY,
+            proj.x,
+            proj.y,
+            proj.radius,
+            this.boss.x,
+            this.boss.y,
+            this.boss.collisionRadius,
+            PERSPECTIVE_CONFIG.verticalMoveRatio,
+          );
+          if (hit.hit) {
+            proj.hitTracker.recordHit(this.boss.id);
+            this.damageBoss(proj.damage, proj.dirX, proj.dirY, proj.knockbackForce, false);
+            this.audio.playArrowHit();
+            if (!proj.penetrating) {
+              proj.readyForRemoval = true;
+            }
           }
         }
       }
@@ -2093,63 +2120,53 @@ export class BrawlScene extends Phaser.Scene {
   private spawnInitialEnvironment(): void {
     // Rear courtyard (near fortress gate, tents & palisades)
     const rearProps: Array<[EnvObjectKind, number, number]> = [
-      ['ceramic_jar', 410, 248],
-      ['barrel_empty', 465, 255],
-      ['table', 540, 265],
-      ['ceramic_jar', 610, 252],
-      ['ceramic_jar', 705, 254],
-      ['barrel_water', 775, 262],
-      ['table', 855, 268],
-      ['ceramic_jar', 940, 256],
-      ['barrel_empty', 995, 266],
-      ['fruit_basket', 495, 295],
-      ['fruit_basket', 795, 295],
+      ['ceramic_jar', 420, 252],
+      ['barrel_empty', 495, 258],
+      ['table', 585, 268],
+      ['ceramic_jar', 695, 254],
+      ['table', 790, 270],
+      ['barrel_water', 885, 260],
+      ['barrel_empty', 955, 268],
+      ['fruit_basket', 465, 305],
+      ['fruit_basket', 845, 305],
     ];
 
-    // Mid-courtyard (main tavern & market stalls)
+    // Mid-courtyard (main tavern & market stalls — spacious enough for 2x tables!)
     const midProps: Array<[EnvObjectKind, number, number]> = [
-      ['barrel_water', 295, 345],
-      ['ceramic_jar', 355, 355],
-      ['table', 430, 365],
-      ['fruit_basket', 505, 355],
-      ['table', 640, 338],
-      ['ceramic_jar', 745, 352],
-      ['table', 845, 368],
-      ['barrel_water', 925, 358],
-      ['barrel_empty', 1005, 365],
-      ['ceramic_jar', 1075, 350],
+      ['barrel_water', 290, 355],
+      ['table', 405, 368],
+      ['ceramic_jar', 515, 352],
+      ['table', 640, 344],
+      ['fruit_basket', 760, 355],
+      ['table', 875, 370],
+      ['barrel_water', 985, 360],
+      ['ceramic_jar', 1065, 355],
 
-      ['barrel_empty', 225, 430],
-      ['fruit_basket', 310, 445],
-      ['table', 475, 465],
-      ['ceramic_jar', 555, 445],
-      ['barrel_water', 735, 450],
-      ['table', 825, 468],
-      ['fruit_basket', 945, 448],
-      ['ceramic_jar', 1045, 455],
-      ['barrel_empty', 1125, 435],
+      ['barrel_empty', 215, 448],
+      ['fruit_basket', 315, 462],
+      ['table', 445, 468],
+      ['ceramic_jar', 560, 442],
+      ['barrel_water', 735, 445],
+      ['table', 855, 468],
+      ['fruit_basket', 980, 458],
+      ['barrel_empty', 1095, 448],
     ];
 
-    // Foreground plaza (large close-up interactive clutter)
+    // Foreground plaza (large close-up interactive tavern tables, barrels & jars!)
     const frontProps: Array<[EnvObjectKind, number, number]> = [
-      ['barrel_water', 185, 545],
-      ['table', 285, 560],
-      ['ceramic_jar', 370, 555],
-      ['fruit_basket', 445, 585],
-      ['barrel_empty', 575, 595],
-      ['table', 675, 580],
-      ['ceramic_jar', 765, 590],
-      ['fruit_basket', 865, 575],
-      ['table', 965, 565],
-      ['barrel_water', 1075, 550],
+      ['barrel_water', 165, 565],
+      ['table', 295, 578],
+      ['ceramic_jar', 405, 595],
+      ['fruit_basket', 515, 652],
+      ['table', 675, 618],
+      ['ceramic_jar', 825, 598],
+      ['table', 965, 578],
+      ['barrel_water', 1095, 565],
 
-      ['ceramic_jar', 235, 635],
-      ['fruit_basket', 355, 645],
-      ['barrel_empty', 485, 640],
-      ['ceramic_jar', 615, 648],
-      ['fruit_basket', 745, 642],
-      ['barrel_empty', 875, 645],
-      ['ceramic_jar', 1005, 635],
+      ['barrel_empty', 225, 650],
+      ['ceramic_jar', 365, 655],
+      ['fruit_basket', 795, 652],
+      ['barrel_empty', 1015, 648],
     ];
 
     for (const [kind, x, y] of [...rearProps, ...midProps, ...frontProps]) {
@@ -2157,8 +2174,8 @@ export class BrawlScene extends Phaser.Scene {
     }
 
     this.spawnHazard('water_puddle', 640, 412);
-    this.spawnHazard('water_puddle', 340, 325);
-    this.spawnHazard('water_puddle', 960, 515);
+    this.spawnHazard('water_puddle', 345, 325);
+    this.spawnHazard('water_puddle', 940, 515);
   }
 
   private spawnObject(kind: EnvObjectKind, x: number, y: number): EnvironmentalObject {
@@ -2386,6 +2403,16 @@ export class BrawlScene extends Phaser.Scene {
       this.step4Tuning,
       {
         onAttackWhoosh: () => this.audio.playEnemyWhoosh(),
+        onAttackSwing: (b, dx, dy, isHeavy) => {
+          this.vfx.spawnEnemySlashArc(
+            b.x,
+            b.y,
+            dx,
+            dy,
+            isHeavy,
+            isHeavy ? 0xfca5a5 : 0xfef08a,
+          );
+        },
         onHitPlayer: (damage, dirX, dirY) => {
           const victim = this.findNearestAliveHero(bandit.x, bandit.y);
           if (!victim) return;
@@ -2400,6 +2427,69 @@ export class BrawlScene extends Phaser.Scene {
           } else {
             victim.takeDamage(damage, dirX, dirY);
           }
+        },
+        onSkillCast: (b, skill) => {
+          if (skill === 'WHIRLWIND') {
+            this.audio.playCycloneSpin();
+          } else if (skill === 'GROUND_SLAM') {
+            this.audio.playBossHeavySlam();
+            this.screenShake.trigger(5.5, 160, 0, 1);
+          } else if (skill === 'DASH_CLEAVE') {
+            this.audio.playChargeRush();
+            this.debris.spawn('DUST_CLOUD', b.x, b.y);
+          } else if (skill === 'DAGGER_THROW') {
+            this.audio.playBowRelease();
+          }
+        },
+        onSkillHitArea: (b, skill, radius, damage, causesDizzy) => {
+          const isWhirl = skill === 'WHIRLWIND';
+          this.vfx.spawnEnemySkillBurst(
+            b.x,
+            b.y,
+            radius,
+            isWhirl ? 0xef4444 : 0xf97316,
+            isWhirl,
+          );
+          this.kickNearbyWreckage(b.x, b.y, radius * 1.15, 290, 0, 0, 225);
+
+          for (const h of this.heroes) {
+            if (h.isDefeated) continue;
+            const dx = h.x - b.x;
+            const dy = (h.y - b.y) / PERSPECTIVE_CONFIG.verticalMoveRatio;
+            const dist = Math.hypot(dx, dy);
+            if (dist <= radius + h.collisionRadius) {
+              const nx = dist > 0.1 ? dx / dist : 1;
+              const ny = dist > 0.1 ? dy / dist : 0;
+              h.takeDamage(damage, nx, ny, {
+                heavy: true,
+                causesDizzy,
+                knockdownForce: causesDizzy ? 310 : 255,
+                launchVz: causesDizzy ? 245 : 205,
+                dizzyDurationMs: causesDizzy ? 1750 : 0,
+              });
+            }
+          }
+        },
+        onThrowDagger: (b, dx, dy, damage) => {
+          const dagger = new Projectile(this, {
+            id: `dagger_${this.nextProjectileSeq++}`,
+            ownerHeroId: b.id,
+            isEnemyProjectile: true,
+            x: b.x + dx * 22,
+            y: b.y + dy * 14,
+            dirX: dx,
+            dirY: dy,
+            speed: 495,
+            damage,
+            knockbackForce: 165,
+            launchVz: 0,
+            penetrating: false,
+            maxRange: 440,
+            radius: 12,
+            tint: 0xf43f5e,
+            textureKey: 'enemy_dagger',
+          });
+          this.projectiles.push(dagger);
         },
         onLanded: (b, impactSpeed) => {
           const strong = impactSpeed > 150;

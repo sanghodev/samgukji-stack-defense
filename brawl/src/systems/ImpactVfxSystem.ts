@@ -575,6 +575,105 @@ export class ImpactVfxSystem implements IGameSystem {
     }
   }
 
+  /**
+   * Visible 16-bit weapon swing slash arc for bandits (swords, clubs, spiked maces, dash cleaves).
+   */
+  public spawnEnemySlashArc(
+    x: number,
+    y: number,
+    dirX: number,
+    dirY: number,
+    isHeavy = false,
+    colorHex = 0xfef08a,
+  ): void {
+    if (!this.scene) return;
+    const scale = getPerspectiveScale(y);
+    const angle = Math.atan2(dirY, dirX);
+    const g = this.scene.add.graphics();
+    g.setPosition(x, y - 28 * scale);
+    g.setDepth(getDepthOrder(y) + 22);
+
+    const rad = (isHeavy ? 62 : 44) * scale;
+    const sweep = isHeavy ? 1.15 : 0.82;
+    g.lineStyle((isHeavy ? 14 : 9) * scale, isHeavy ? 0xef4444 : 0xf97316, 0.55);
+    g.beginPath();
+    g.arc(0, 0, rad, angle - sweep, angle + sweep, false);
+    g.strokePath();
+
+    g.lineStyle((isHeavy ? 6 : 4) * scale, colorHex, 0.95);
+    g.beginPath();
+    g.arc(0, 0, rad * 0.95, angle - sweep * 0.9, angle + sweep * 0.9, false);
+    g.strokePath();
+
+    g.lineStyle(2.5 * scale, 0xffffff, 1);
+    g.beginPath();
+    g.arc(0, 0, rad * 0.9, angle - sweep * 0.72, angle + sweep * 0.72, false);
+    g.strokePath();
+
+    this.scene.tweens.add({
+      targets: g,
+      alpha: 0,
+      scaleX: isHeavy ? 1.24 : 1.14,
+      scaleY: isHeavy ? 1.24 : 1.14,
+      duration: isHeavy ? 185 : 125,
+      ease: 'Quad.easeOut',
+      onComplete: () => g.destroy(),
+    });
+  }
+
+  /**
+   * Dramatic AoE burst ring & fiery/crimson sparks for higher-tier bandit combat skills
+   * (Elite Whirlwind, Ground Slam, Stubborn Dash Cleave).
+   */
+  public spawnEnemySkillBurst(
+    x: number,
+    y: number,
+    radius: number,
+    colorHex = 0xf97316,
+    isWhirlwind = false,
+  ): void {
+    if (!this.scene) return;
+    const scale = getPerspectiveScale(y);
+    const depth = getDepthOrder(y) + 26;
+
+    const ring = this.scene.add.graphics().setPosition(x, y - (isWhirlwind ? 26 * scale : 4)).setDepth(depth);
+    ring.lineStyle(7 * scale, colorHex, 0.9);
+    ring.strokeEllipse(0, 0, radius * 1.9 * scale, radius * 1.18 * scale);
+    ring.lineStyle(3 * scale, 0xfef08a, 1);
+    ring.strokeEllipse(0, 0, radius * 1.45 * scale, radius * 0.88 * scale);
+
+    this.scene.tweens.add({
+      targets: ring,
+      scaleX: 1.38,
+      scaleY: 1.38,
+      rotation: isWhirlwind ? Math.PI * 0.85 : 0,
+      alpha: 0,
+      duration: 280,
+      ease: 'Quad.easeOut',
+      onComplete: () => ring.destroy(),
+    });
+
+    const count = isWhirlwind ? 12 : 10;
+    for (let i = 0; i < count; i++) {
+      const ang = (i / count) * Math.PI * 2 + (Math.random() - 0.5) * 0.3;
+      const spd = (150 + Math.random() * 110) * scale;
+      this.acquireParticle(this.sparkPool, {
+        x: x + Math.cos(ang) * 18 * scale,
+        y: y - 16 * scale + Math.sin(ang) * 10 * scale,
+        vx: Math.cos(ang) * spd,
+        vy: Math.sin(ang) * spd * 0.55,
+        vz: 90 + Math.random() * 110,
+        lifeMs: 260,
+        startScale: 1.25 * scale,
+        endScale: 0.25 * scale,
+        depth: depth + 2,
+        tint: i % 2 === 0 ? colorHex : 0xfde047,
+        gravity: 380,
+      });
+    }
+    this.spawnDustBurst(x, y + 2, 0, 1, 6, scale);
+  }
+
   private spawnDustBurst(
     x: number,
     y: number,
