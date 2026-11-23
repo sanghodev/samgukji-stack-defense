@@ -69,6 +69,7 @@ export class EnvironmentalObject {
   private readonly callbacks: EnvObjectCallbacks;
   private readonly shadow: Phaser.GameObjects.Ellipse;
   private readonly bodyGfx: Phaser.GameObjects.Graphics;
+  private readonly bodySprite?: Phaser.GameObjects.Image;
   private readonly promptBadge: Phaser.GameObjects.Container;
 
   private spinAngle = 0;
@@ -115,9 +116,25 @@ export class EnvironmentalObject {
     );
 
     this.bodyGfx = scene.add.graphics();
-    this.drawObjectArt();
+    if (scene.textures.exists('mayhem_props')) {
+      const frameMap: Record<EnvObjectKind, { frame: number; scale: number; yOff: number }> = {
+        table: { frame: 0, scale: 0.72, yOff: 6 },
+        barrel_water: { frame: 1, scale: 0.56, yOff: 5 },
+        barrel_empty: { frame: 2, scale: 0.56, yOff: 5 },
+        ceramic_jar: { frame: 3, scale: 0.52, yOff: 5 },
+        fruit_basket: { frame: Math.random() < 0.5 ? 4 : 5, scale: 0.52, yOff: 5 },
+      };
+      const cfg = frameMap[kind];
+      this.bodySprite = scene.add
+        .image(0, cfg.yOff, 'mayhem_props', cfg.frame)
+        .setOrigin(0.5, 0.92)
+        .setScale(cfg.scale);
+      this.bodyGfx.setVisible(false);
+    } else {
+      this.drawObjectArt();
+    }
 
-    // Small crisp pickup indicator shown when Zhao Yun is within grab reach
+    // Small crisp pickup indicator shown when Hero is within grab reach
     const pillBg = scene.add.rectangle(0, 0, 56, 18, 0x1c120c, 0.88);
     pillBg.setStrokeStyle(1, 0xfbbf24, 0.9);
     const pillTxt = scene.add
@@ -132,11 +149,11 @@ export class EnvironmentalObject {
       .container(0, -this.spec.radius * 2.2 - 14, [pillBg, pillTxt])
       .setVisible(false);
 
-    this.container = scene.add.container(this.x, this.y, [
-      this.shadow,
-      this.bodyGfx,
-      this.promptBadge,
-    ]);
+    const children: Phaser.GameObjects.GameObject[] = [this.shadow, this.bodyGfx];
+    if (this.bodySprite) children.push(this.bodySprite);
+    children.push(this.promptBadge);
+
+    this.container = scene.add.container(this.x, this.y, children);
     this.syncVisuals();
   }
 
@@ -556,13 +573,18 @@ export class EnvironmentalObject {
     this.container.setScale(scale);
     this.container.setDepth(overrideDepth ?? getDepthOrder(this.y));
 
-    this.bodyGfx.y = -this.elevationZ;
-    this.bodyGfx.rotation = this.spinAngle;
-
-    if (this.flashTimerMs > 0) {
-      this.bodyGfx.setAlpha(0.65);
+    if (this.bodySprite) {
+      this.bodySprite.y = 5 - this.elevationZ;
+      this.bodySprite.rotation = this.spinAngle;
+      if (this.flashTimerMs > 0) {
+        this.bodySprite.setTintFill(0xffffff);
+      } else {
+        this.bodySprite.clearTint();
+      }
     } else {
-      this.bodyGfx.setAlpha(1);
+      this.bodyGfx.y = -this.elevationZ;
+      this.bodyGfx.rotation = this.spinAngle;
+      this.bodyGfx.setAlpha(this.flashTimerMs > 0 ? 0.65 : 1);
     }
 
     const shScale = Phaser.Math.Clamp(1 - this.elevationZ * 0.005, 0.4, 1);

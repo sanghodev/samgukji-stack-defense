@@ -153,6 +153,65 @@ export class ImpactVfxSystem implements IGameSystem {
       g.strokePath();
     }
 
+    const hasComicVfx = this.scene.textures.exists('combat_vfx');
+    if (hasComicVfx) {
+      if (heroId === 'guanyu') {
+        const slash = this.scene.add
+          .image(x + dirX * 36 * scale, y - 28 * scale + dirY * 18 * scale, 'combat_vfx', 1)
+          .setOrigin(0.5)
+          .setRotation(angle)
+          .setScale((attackType === 'HEAVY' ? 0.96 : attackType === 'LIGHT_3' ? 0.8 : 0.62) * scale)
+          .setDepth(getDepthOrder(y) + 28);
+        this.scene.tweens.add({
+          targets: slash,
+          x: slash.x + dirX * 26 * scale,
+          y: slash.y + dirY * 14 * scale,
+          scaleX: slash.scaleX * 1.24,
+          scaleY: slash.scaleY * 1.24,
+          alpha: 0,
+          duration: attackType === 'HEAVY' ? 210 : 145,
+          ease: 'Quad.easeOut',
+          onComplete: () => slash.destroy(),
+        });
+      } else if (heroId === 'zhaoyun') {
+        const thrust = this.scene.add
+          .image(x + dirX * 42 * scale, y - 26 * scale + dirY * 18 * scale, 'combat_vfx', 6)
+          .setOrigin(0.5)
+          .setRotation(angle + Math.PI * 0.25)
+          .setScale((attackType === 'HEAVY' ? 0.92 : attackType === 'LIGHT_3' ? 0.74 : 0.56) * scale)
+          .setDepth(getDepthOrder(y) + 28);
+        this.scene.tweens.add({
+          targets: thrust,
+          x: thrust.x + dirX * 32 * scale,
+          y: thrust.y + dirY * 18 * scale,
+          scaleX: thrust.scaleX * 1.18,
+          scaleY: thrust.scaleY * 1.18,
+          alpha: 0,
+          duration: attackType === 'HEAVY' ? 180 : 125,
+          ease: 'Quad.easeOut',
+          onComplete: () => thrust.destroy(),
+        });
+      } else if (heroId === 'zhangfei' && (attackType === 'HEAVY' || attackType === 'LIGHT_3')) {
+        const flame = this.scene.add
+          .image(x + dirX * 34 * scale, y - 26 * scale + dirY * 16 * scale, 'combat_vfx', 2)
+          .setOrigin(0.5)
+          .setRotation(angle)
+          .setScale(0.76 * scale)
+          .setDepth(getDepthOrder(y) + 28);
+        this.scene.tweens.add({
+          targets: flame,
+          x: flame.x + dirX * 24 * scale,
+          y: flame.y + dirY * 14 * scale,
+          alpha: 0,
+          scaleX: flame.scaleX * 1.2,
+          scaleY: flame.scaleY * 1.2,
+          duration: 185,
+          ease: 'Quad.easeOut',
+          onComplete: () => flame.destroy(),
+        });
+      }
+    }
+
     const duration = attackType === 'HEAVY' ? 170 : attackType === 'LIGHT_3' ? 145 : 105;
     this.scene.tweens.add({
       targets: g,
@@ -166,7 +225,7 @@ export class ImpactVfxSystem implements IGameSystem {
   }
 
   /**
-   * Synchronized contact flash + directional sparks + damage popup at the moment of impact.
+   * Synchronized 16-bit comic starburst contact flash + directional sparks + damage popup.
    */
   public spawnHitImpact(
     x: number,
@@ -182,37 +241,46 @@ export class ImpactVfxSystem implements IGameSystem {
     const impactY = y - (26 + elevationZ) * scale;
     const depth = getDepthOrder(y) + 40;
 
-    // 1. Crisp impact flash / starburst
-    const flash = this.scene.add.graphics();
-    flash.setPosition(x, impactY);
-    flash.setDepth(depth);
+    // 1. Crisp 16-bit comic yellow-white jagged starburst (matching image.png!)
+    if (this.scene.textures.exists('combat_vfx')) {
+      const startScale =
+        (attackType === 'HEAVY' ? 0.82 : attackType === 'LIGHT_3' ? 0.64 : 0.44) * scale;
+      const burst = this.scene.add
+        .image(x, impactY, 'combat_vfx', 0)
+        .setOrigin(0.5)
+        .setRotation((Math.random() - 0.5) * 0.7)
+        .setScale(startScale * 0.65)
+        .setDepth(depth);
 
-    if (attackType === 'HEAVY') {
-      // Large white/yellow starburst + shock ring
-      flash.fillStyle(0xfef08a, 0.92);
-      this.drawStarburst(flash, 34 * scale, 13 * scale, 8);
-      flash.fillStyle(0xffffff, 1);
-      flash.fillCircle(0, 0, 14 * scale);
-      flash.lineStyle(3 * scale, 0x38bdf8, 0.9);
-      flash.strokeCircle(0, 0, 26 * scale);
-    } else if (attackType === 'LIGHT_3') {
-      flash.fillStyle(0xbae6fd, 0.9);
-      this.drawStarburst(flash, 25 * scale, 10 * scale, 6);
-      flash.fillStyle(0xffffff, 1);
-      flash.fillCircle(0, 0, 10 * scale);
+      this.scene.tweens.add({
+        targets: burst,
+        scaleX: startScale * 1.28,
+        scaleY: startScale * 1.28,
+        alpha: 0,
+        duration: attackType === 'HEAVY' ? 195 : 135,
+        ease: 'Quad.easeOut',
+        onComplete: () => burst.destroy(),
+      });
     } else {
-      flash.fillStyle(0xffffff, 0.95);
-      this.drawStarburst(flash, 16 * scale, 6 * scale, 4);
+      const flash = this.scene.add.graphics();
+      flash.setPosition(x, impactY);
+      flash.setDepth(depth);
+      if (attackType === 'HEAVY') {
+        flash.fillStyle(0xfef08a, 0.92);
+        this.drawStarburst(flash, 34 * scale, 13 * scale, 8);
+      } else {
+        flash.fillStyle(0xffffff, 0.95);
+        this.drawStarburst(flash, 18 * scale, 7 * scale, 6);
+      }
+      this.scene.tweens.add({
+        targets: flash,
+        alpha: 0,
+        scale: attackType === 'HEAVY' ? 1.45 : 1.25,
+        duration: attackType === 'HEAVY' ? 160 : 105,
+        ease: 'Quad.easeOut',
+        onComplete: () => flash.destroy(),
+      });
     }
-
-    this.scene.tweens.add({
-      targets: flash,
-      alpha: 0,
-      scale: attackType === 'HEAVY' ? 1.45 : 1.25,
-      duration: attackType === 'HEAVY' ? 160 : 105,
-      ease: 'Quad.easeOut',
-      onComplete: () => flash.destroy(),
-    });
 
     // 2. Pooled directional sparks
     const sparkCount = attackType === 'HEAVY' ? 12 : attackType === 'LIGHT_3' ? 8 : 5;
@@ -282,13 +350,31 @@ export class ImpactVfxSystem implements IGameSystem {
   }
 
   /**
-   * Visible cobblestone dust ring when a launched enemy slams onto the ground.
+   * Dramatic 16-bit mud/water splash crown + dust ring when a launched enemy slams onto the ground!
    */
   public spawnLandingImpact(x: number, y: number, strong = true): void {
     if (!this.scene) return;
     const scale = getPerspectiveScale(y);
-    const count = strong ? 8 : 4;
 
+    if (this.scene.textures.exists('combat_vfx')) {
+      const splash = this.scene.add
+        .image(x, y + 2, 'combat_vfx', 4)
+        .setOrigin(0.5, 0.85)
+        .setScale((strong ? 0.68 : 0.45) * scale)
+        .setDepth(getDepthOrder(y) + 8);
+      this.scene.tweens.add({
+        targets: splash,
+        scaleX: splash.scaleX * 1.25,
+        scaleY: splash.scaleY * 1.15,
+        y: splash.y - 6 * scale,
+        alpha: 0,
+        duration: strong ? 320 : 210,
+        ease: 'Quad.easeOut',
+        onComplete: () => splash.destroy(),
+      });
+    }
+
+    const count = strong ? 8 : 4;
     for (let i = 0; i < count; i++) {
       const ang = (i / count) * Math.PI * 2 + (Math.random() - 0.5) * 0.4;
       const spd = (strong ? 95 : 55) * (0.7 + Math.random() * 0.5) * scale;
@@ -302,8 +388,77 @@ export class ImpactVfxSystem implements IGameSystem {
         startScale: (strong ? 0.9 : 0.6) * scale,
         endScale: (strong ? 1.5 : 1.0) * scale,
         depth: getDepthOrder(y) - 1,
-        tint: 0xf2e3c6,
+        tint: 0xd6b588,
         gravity: 160,
+      });
+    }
+  }
+
+  /**
+   * Signature Zhang Fei blazing red-orange charge flame + billowing cream dust cloud!
+   */
+  public spawnChargeFlameTrail(x: number, y: number, dirX: number, dirY: number): void {
+    if (!this.scene || !this.scene.textures.exists('combat_vfx')) return;
+    const scale = getPerspectiveScale(y);
+    const angle = Math.atan2(dirY, dirX);
+
+    const flame = this.scene.add
+      .image(x - dirX * 26 * scale, y - 24 * scale - dirY * 12 * scale, 'combat_vfx', 2)
+      .setOrigin(0.5)
+      .setRotation(angle)
+      .setScale(0.76 * scale)
+      .setDepth(getDepthOrder(y) - 1);
+    this.scene.tweens.add({
+      targets: flame,
+      x: flame.x - dirX * 28 * scale,
+      y: flame.y - dirY * 14 * scale,
+      scaleX: flame.scaleX * 1.18,
+      alpha: 0,
+      duration: 210,
+      ease: 'Quad.easeOut',
+      onComplete: () => flame.destroy(),
+    });
+
+    const cloud = this.scene.add
+      .image(x - dirX * 36 * scale, y - 8 * scale, 'combat_vfx', 5)
+      .setOrigin(0.5, 0.85)
+      .setScale(0.42 * scale)
+      .setDepth(getDepthOrder(y) - 2);
+    this.scene.tweens.add({
+      targets: cloud,
+      x: cloud.x - dirX * 22 * scale,
+      y: cloud.y - 10 * scale,
+      scaleX: 0.72 * scale,
+      scaleY: 0.72 * scale,
+      alpha: 0,
+      duration: 340,
+      ease: 'Quad.easeOut',
+      onComplete: () => cloud.destroy(),
+    });
+  }
+
+  /**
+   * Comedic flying blue-and-white porcelain bowls bursting out when tavern tables shatter!
+   */
+  public spawnFlyingBowls(x: number, y: number, dirX: number, dirY: number): void {
+    if (!this.scene || !this.scene.textures.exists('mayhem_props')) return;
+    const scale = getPerspectiveScale(y);
+    for (let i = 0; i < 2; i++) {
+      const side = i === 0 ? -1 : 1;
+      const bowl = this.scene.add
+        .image(x + side * 12 * scale, y - 26 * scale, 'mayhem_props', 7)
+        .setOrigin(0.5)
+        .setScale(0.32 * scale)
+        .setDepth(getDepthOrder(y) + 22);
+      this.scene.tweens.add({
+        targets: bowl,
+        x: bowl.x + (dirX * 48 + side * 38) * scale,
+        y: bowl.y - 46 * scale + dirY * 18 * scale,
+        rotation: side * 5.2,
+        alpha: 0,
+        duration: 480,
+        ease: 'Quad.easeOut',
+        onComplete: () => bowl.destroy(),
       });
     }
   }

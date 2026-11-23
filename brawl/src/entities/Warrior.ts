@@ -184,7 +184,7 @@ export class Warrior {
   private readonly zhaoYunDirScale = 0.78;
   private readonly zhaoYunRunScale = 0.68;
   private readonly zhaoYunActionScale = 0.68;
-  private readonly customSheetScale = 0.78;
+  private readonly customSheetScale = 0.72;
 
   private phaseTimerMs = 0;
   private comboStep = 0;

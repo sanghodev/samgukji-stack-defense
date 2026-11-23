@@ -156,7 +156,7 @@ export class Bandit {
     this.archetype = archetype;
     this.spec = BANDIT_ARCHETYPES[archetype];
     this.mass = this.spec.mass;
-    this.baseSpriteScale = 0.56 * this.spec.scaleMul;
+    this.baseSpriteScale = 0.64 * this.spec.scaleMul;
 
     this.x = spawnX;
     this.y = spawnY;
@@ -171,20 +171,14 @@ export class Bandit {
     this.shadow = scene.add.ellipse(
       0,
       2,
-      46 * this.spec.scaleMul,
-      15 * this.spec.scaleMul,
+      48 * this.spec.scaleMul,
+      16 * this.spec.scaleMul,
       0x1a120b,
-      0.4,
+      0.42,
     );
 
-    // Elite uses dedicated Step 6 darker-armored elite_bandit_sheet; others use blue-uniformed bandit
-    const useEliteSheet = archetype === 'elite' && scene.textures.exists('elite_bandit_sheet');
-    this.sprite = scene.add.sprite(
-      0,
-      4,
-      useEliteSheet ? 'elite_bandit_sheet' : 'enemies_4types',
-      useEliteSheet ? 0 : 0,
-    );
+    const { tex, frame } = this.resolveBaseTextureAndFrame();
+    this.sprite = scene.add.sprite(0, 4, tex, frame);
     this.sprite.setOrigin(0.5, 0.9);
     this.sprite.setScale(this.baseSpriteScale);
 
@@ -1224,11 +1218,41 @@ export class Bandit {
     }
   }
 
+  private resolveBaseTextureAndFrame(): { tex: string; frame: number } {
+    const hasVaried = this.scene.textures.exists('bandits_varied');
+    if (!hasVaried) {
+      return { tex: 'enemies_4types', frame: this.archetype === 'elite' ? 1 : 0 };
+    }
+    switch (this.archetype) {
+      case 'clumsy':
+        return { tex: 'bandits_varied', frame: 2 };
+      case 'sneaky':
+        return { tex: 'bandits_varied', frame: 3 };
+      case 'elite':
+        return { tex: 'bandits_varied', frame: 4 };
+      case 'stubborn':
+        return { tex: 'enemies_4types', frame: 1 };
+      case 'coward':
+      case 'overconfident':
+      default:
+        return { tex: 'bandits_varied', frame: 0 };
+    }
+  }
+
+  private setPoseTexture(tex: string, frame: number): void {
+    if (this.sprite.texture.key !== tex || this.sprite.frame.name !== String(frame)) {
+      this.sprite.setTexture(tex, frame);
+    }
+  }
+
   private syncVisuals(): void {
     const scale = getPerspectiveScale(this.y);
     this.container.setPosition(this.x, this.y);
     this.container.setScale(scale);
     this.container.setDepth(getDepthOrder(this.y));
+
+    const hasVaried = this.scene.textures.exists('bandits_varied');
+    const base = this.resolveBaseTextureAndFrame();
 
     this.sprite.setFlipX(this.facingDirX < 0);
 
@@ -1236,7 +1260,7 @@ export class Bandit {
       this.sprite.setTintFill(0xffffff);
     } else if (this.state === 'ATTACK_WINDUP') {
       this.sprite.setTint(0xffb4a2);
-    } else if (this.spec.tintColor !== null) {
+    } else if (!hasVaried && this.spec.tintColor !== null) {
       this.sprite.setTint(this.spec.tintColor);
     } else {
       this.sprite.clearTint();
@@ -1249,28 +1273,33 @@ export class Bandit {
 
     switch (this.state) {
       case 'APPROACH': {
+        this.setPoseTexture(base.tex, base.frame);
         spriteY = 4 - Math.abs(Math.sin(this.walkPhase)) * 4.5;
         rot = Math.cos(this.walkPhase) * 0.06;
         break;
       }
       case 'FLEE':
       case 'MOVING_TO_COVER': {
-        // Frantic high-tempo panic sprint wobble!
+        // Wide-eyed terrified sweat-drop panic sprint pose!
+        if (hasVaried) this.setPoseTexture('bandits_varied', 1);
+        else this.setPoseTexture(base.tex, base.frame);
         spriteY = 4 - Math.abs(Math.sin(this.walkPhase)) * 7;
-        rot = Math.sin(this.walkPhase) * 0.16;
+        rot = Math.sin(this.walkPhase) * 0.14;
         break;
       }
       case 'HIDING': {
-        // Crouched down behind cover, trembling slightly
+        if (hasVaried) this.setPoseTexture('bandits_varied', 1);
+        else this.setPoseTexture(base.tex, base.frame);
         const tremble = Math.sin(performance.now() * 0.03) * 1.5;
         spriteY = 14;
-        sx = this.baseSpriteScale * 1.06;
-        sy = this.baseSpriteScale * 0.68;
+        sx = this.baseSpriteScale * 1.04;
+        sy = this.baseSpriteScale * 0.7;
         this.sprite.x = tremble;
         break;
       }
       case 'PEEKING': {
-        // Slowly popping head up over cover to check!
+        if (hasVaried) this.setPoseTexture('bandits_varied', 1);
+        else this.setPoseTexture(base.tex, base.frame);
         spriteY = 6;
         sx = this.baseSpriteScale * 0.96;
         sy = this.baseSpriteScale * 0.92;
@@ -1278,38 +1307,57 @@ export class Bandit {
         break;
       }
       case 'SURRENDERED': {
-        // Kneeling & trembling with hands up
-        const shiver = Math.sin(performance.now() * 0.028) * 1.8;
-        spriteY = 12;
-        sx = this.baseSpriteScale * 1.04;
-        sy = this.baseSpriteScale * 0.78;
-        this.sprite.x = shiver;
+        // Dedicated kneeling hands-up waving white flag sprite!
+        if (hasVaried) {
+          this.setPoseTexture('bandits_varied', 7);
+          spriteY = 6;
+          sx = this.baseSpriteScale * 1.02;
+          sy = this.baseSpriteScale * 1.02;
+        } else {
+          spriteY = 12;
+          sx = this.baseSpriteScale * 1.04;
+          sy = this.baseSpriteScale * 0.78;
+        }
+        this.sprite.x = Math.sin(performance.now() * 0.026) * 1.6;
         break;
       }
       case 'ATTACK_WINDUP': {
+        this.setPoseTexture(base.tex, base.frame);
         rot = -this.facingDirX * 0.24;
         sx = this.baseSpriteScale * 1.1;
         sy = this.baseSpriteScale * 0.9;
         break;
       }
       case 'ATTACK_ACTIVE': {
+        this.setPoseTexture(base.tex, base.frame);
         rot = this.facingDirX * 0.22;
         sx = this.baseSpriteScale * 1.14;
         sy = this.baseSpriteScale * 0.92;
         break;
       }
       case 'HURT': {
-        rot = -this.facingDirX * 0.28;
-        sx = this.baseSpriteScale * 0.88;
-        sy = this.baseSpriteScale * 1.14;
+        if (hasVaried) this.setPoseTexture('bandits_varied', 5);
+        else this.setPoseTexture(base.tex, base.frame);
+        rot = -this.facingDirX * 0.22;
+        sx = this.baseSpriteScale * 0.94;
+        sy = this.baseSpriteScale * 1.1;
         break;
       }
       case 'KNOCKBACK':
       case 'DEFEATED': {
-        if (this.elevationZ > 0) {
-          rot = this.tumbleSpinDir * (1.25 + (this.elevationZ / 90) * 0.6);
+        if (this.elevationZ > 2) {
+          // Hilarious >_< screaming flying-backward pose!
+          if (hasVaried) this.setPoseTexture('bandits_varied', 5);
+          rot = this.tumbleSpinDir * (0.28 + (this.elevationZ / 130) * 0.45);
           sx = this.baseSpriteScale * 1.08;
-          sy = this.baseSpriteScale * 0.92;
+          sy = this.baseSpriteScale * 0.94;
+        } else if (hasVaried) {
+          // Dedicated flat-on-ground dizzy X_X sprite (already horizontal, no 90deg rot needed!)
+          this.setPoseTexture('bandits_varied', 6);
+          rot = 0;
+          spriteY = 8;
+          sx = this.baseSpriteScale * 1.06;
+          sy = this.baseSpriteScale * 0.96;
         } else {
           rot = this.tumbleSpinDir * (Math.PI * 0.48);
           spriteY = 12;
@@ -1319,22 +1367,32 @@ export class Bandit {
         break;
       }
       case 'KNOCKDOWN': {
-        rot = this.tumbleSpinDir * (Math.PI * 0.48);
-        spriteY = 12;
-        sx = this.baseSpriteScale * 1.08;
-        sy = this.baseSpriteScale * 0.85;
+        if (hasVaried) {
+          this.setPoseTexture('bandits_varied', 6);
+          rot = 0;
+          spriteY = 8;
+          sx = this.baseSpriteScale * 1.06;
+          sy = this.baseSpriteScale * 0.96;
+        } else {
+          rot = this.tumbleSpinDir * (Math.PI * 0.48);
+          spriteY = 12;
+          sx = this.baseSpriteScale * 1.08;
+          sy = this.baseSpriteScale * 0.85;
+        }
         this.reactionText.y = -34 + Math.sin(performance.now() * 0.012) * 3;
         break;
       }
       case 'RECOVER': {
+        this.setPoseTexture(base.tex, base.frame);
         const p = 1 - Phaser.Math.Clamp(this.stateTimerMs / BANDIT_COMBAT_CONFIG.recoverDurationMs, 0, 1);
-        rot = this.tumbleSpinDir * (Math.PI * 0.48) * (1 - p);
-        spriteY = Phaser.Math.Linear(12, 4, p);
+        rot = this.tumbleSpinDir * 0.35 * (1 - p);
+        spriteY = Phaser.Math.Linear(10, 4, p);
         sx = this.baseSpriteScale * (1 + (1 - p) * 0.12);
         sy = this.baseSpriteScale * (0.85 + p * 0.15);
         break;
       }
       default:
+        this.setPoseTexture(base.tex, base.frame);
         break;
     }
 

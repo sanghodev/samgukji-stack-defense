@@ -74,10 +74,10 @@ import { HumanTreasureOffer, StageOverlayUI } from '../systems/StageOverlayUI';
 import { MarketplaceArena } from '../world/MarketplaceArena';
 
 const HERO_SPAWN_OFFSETS: ReadonlyArray<{ x: number; y: number }> = [
-  { x: 580, y: 515 },
-  { x: 700, y: 515 },
-  { x: 520, y: 565 },
-  { x: 760, y: 565 },
+  { x: 540, y: 540 }, // Zhao Yun (front center-left)
+  { x: 350, y: 425 }, // Guan Yu (mid-left)
+  { x: 785, y: 430 }, // Zhang Fei (mid-right)
+  { x: 255, y: 555 }, // Huang Zhong (rear-left archer vantage)
 ];
 
 /**
@@ -347,8 +347,14 @@ export class BrawlScene extends Phaser.Scene {
     this.arena = new MarketplaceArena(this);
     this.debugVisGfx = this.add.graphics().setDepth(DEPTH_LAYERS.HUD - 10);
 
-    // Prepare arena backdrop & heroes, then present the Stage 1 Main Menu!
-    this.openMainMenu();
+    // Prepare arena backdrop & heroes, then present the Stage 1 Main Menu (or jump into combat if ?autostart=1)
+    const params =
+      typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null;
+    if (params?.get('autostart') === '1') {
+      this.startStage1Run(false);
+    } else {
+      this.openMainMenu();
+    }
 
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, this.handleShutdown, this);
   }
@@ -1034,8 +1040,16 @@ export class BrawlScene extends Phaser.Scene {
       this.step4Tuning,
       this.step5Tuning,
       {
-        onFootstep: (_h, heavy) =>
-          heavy ? this.audio.playHeavyFootstep() : this.audio.playFootstep(),
+        onFootstep: (h, heavy) => {
+          if (heavy) {
+            this.audio.playHeavyFootstep();
+            if (h.isChargeActive) {
+              this.vfx.spawnChargeFlameTrail(h.x, h.y, h.chargeDirX, h.chargeDirY);
+            }
+          } else {
+            this.audio.playFootstep();
+          }
+        },
         onAttackActiveStart: (h, attackType, ax, ay, dirX, dirY, range) => {
           if (h.heroId === 'guanyu') {
             this.audio.playGuandaoSweep();
@@ -1065,6 +1079,7 @@ export class BrawlScene extends Phaser.Scene {
         onZhangFeiChargeRush: (h) => {
           this.audio.playChargeRush();
           this.debris.spawn('DUST_CLOUD', h.x, h.y, -h.chargeDirX, -h.chargeDirY);
+          this.vfx.spawnChargeFlameTrail(h.x, h.y, h.chargeDirX, h.chargeDirY);
           this.broadcastFearWave(h.x, h.y, 320, 26);
         },
         onZhangFeiChargeSkid: (h) => {
@@ -1317,6 +1332,25 @@ export class BrawlScene extends Phaser.Scene {
     this.audio.playCycloneSpin();
     this.spawnShockwave(hero.x, hero.y, 0x22c55e, radius * 1.45);
     this.debris.spawn('DUST_CLOUD', hero.x, hero.y);
+    if (this.textures.exists('combat_vfx')) {
+      const s = getPerspectiveScale(hero.y);
+      for (const ang of [0, Math.PI]) {
+        const arc = this.add
+          .image(hero.x, hero.y - 26 * s, 'combat_vfx', 1)
+          .setOrigin(0.2, 0.5)
+          .setRotation(ang)
+          .setScale((isFinal ? 1.1 : 0.85) * s)
+          .setDepth(getDepthOrder(hero.y) + 25);
+        this.tweens.add({
+          targets: arc,
+          rotation: ang + Math.PI * 1.25,
+          alpha: 0,
+          duration: 210,
+          ease: 'Quad.easeOut',
+          onComplete: () => arc.destroy(),
+        });
+      }
+    }
 
     const dmg = Math.round(
       (isFinal ? 28 : 16) *
@@ -2025,6 +2059,7 @@ export class BrawlScene extends Phaser.Scene {
       this.audio.playTableShatter();
       this.debris.spawn('WOOD_SPLINTERS', obj.x, obj.y, dirX, dirY);
       this.debris.spawn('DUST_CLOUD', obj.x, obj.y, dirX, dirY);
+      this.vfx.spawnFlyingBowls(obj.x, obj.y, dirX, dirY);
       this.screenShake.trigger(6.0, 120, dirX, dirY);
     } else if (obj.spec.rollable) {
       this.audio.playBarrelBreak(obj.spec.containsWater);

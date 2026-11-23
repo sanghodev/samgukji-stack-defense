@@ -53,7 +53,9 @@ export class CameraGagController implements IGameSystem {
   public init(ctx: SystemContext): void {
     this.scene = ctx.scene;
 
-    this.faceSprite = ctx.scene.add.image(0, 0, 'bandit_splat_face');
+    this.faceSprite = ctx.scene.textures.exists('combat_vfx')
+      ? ctx.scene.add.image(0, 0, 'combat_vfx', 7)
+      : ctx.scene.add.image(0, 0, 'bandit_splat_face');
     this.faceSprite.setOrigin(0.5);
 
     this.splatLabel = ctx.scene.add

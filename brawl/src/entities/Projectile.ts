@@ -78,15 +78,21 @@ export class Projectile {
     this.vx = this.dirX * cfg.speed;
     this.vy = this.dirY * cfg.speed * PERSPECTIVE_CONFIG.verticalMoveRatio;
 
-    this.shadow = scene.add.ellipse(0, 2, 22, 6, 0x1a120b, 0.28);
-    this.sprite = scene.add.image(0, -26, cfg.textureKey ?? 'arrow_projectile');
+    this.shadow = scene.add.ellipse(0, 2, 26, 7, 0x1a120b, 0.32);
+    if (scene.textures.exists('combat_vfx')) {
+      const isWind = cfg.textureKey === 'wind_blade_projectile';
+      this.sprite = scene.add.image(0, -28, 'combat_vfx', isWind ? 1 : 3);
+      this.sprite.setScale(isWind ? 0.62 : cfg.penetrating ? 0.56 : 0.44);
+    } else {
+      this.sprite = scene.add.image(0, -26, cfg.textureKey ?? 'arrow_projectile');
+      if (cfg.penetrating) {
+        this.sprite.setScale(1.35, 1.35);
+      }
+    }
     this.sprite.setOrigin(0.5);
     this.sprite.setRotation(Math.atan2(this.vy, this.vx));
-    if (cfg.tint) {
+    if (cfg.tint && !scene.textures.exists('combat_vfx')) {
       this.sprite.setTint(cfg.tint);
-    }
-    if (cfg.penetrating) {
-      this.sprite.setScale(1.35, 1.35);
     }
 
     this.container = scene.add.container(this.x, this.y, [this.shadow, this.sprite]);

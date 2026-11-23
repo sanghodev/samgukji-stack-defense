@@ -37,13 +37,13 @@ export interface WorldSpawnPoint {
  * Never spawns outside ARENA_BOUNDS or directly on top of center heroes.
  */
 export const STAGE1_SPAWN_POINTS: Record<SpawnLocationKey, WorldSpawnPoint> = {
-  FORTRESS_GATE: { key: 'FORTRESS_GATE', x: 640, y: 245, labelKr: '장안문 성문' },
-  LEFT_ALLEY_REAR: { key: 'LEFT_ALLEY_REAR', x: 350, y: 270, labelKr: '좌측 골목' },
-  RIGHT_ALLEY_REAR: { key: 'RIGHT_ALLEY_REAR', x: 930, y: 270, labelKr: '우측 골목' },
-  LEFT_STALL_MID: { key: 'LEFT_STALL_MID', x: 255, y: 420, labelKr: '좌측 시장' },
-  RIGHT_STALL_MID: { key: 'RIGHT_STALL_MID', x: 1025, y: 420, labelKr: '우측 시장' },
-  LEFT_FRONT: { key: 'LEFT_FRONT', x: 220, y: 580, labelKr: '좌측 전방' },
-  RIGHT_FRONT: { key: 'RIGHT_FRONT', x: 1060, y: 580, labelKr: '우측 전방' },
+  FORTRESS_GATE: { key: 'FORTRESS_GATE', x: 945, y: 238, labelKr: '장안문 성문' },
+  LEFT_ALLEY_REAR: { key: 'LEFT_ALLEY_REAR', x: 380, y: 268, labelKr: '좌측 막사' },
+  RIGHT_ALLEY_REAR: { key: 'RIGHT_ALLEY_REAR', x: 1090, y: 275, labelKr: '우측 수레' },
+  LEFT_STALL_MID: { key: 'LEFT_STALL_MID', x: 245, y: 420, labelKr: '좌측 장터' },
+  RIGHT_STALL_MID: { key: 'RIGHT_STALL_MID', x: 1065, y: 420, labelKr: '우측 장터' },
+  LEFT_FRONT: { key: 'LEFT_FRONT', x: 225, y: 585, labelKr: '좌측 전방' },
+  RIGHT_FRONT: { key: 'RIGHT_FRONT', x: 1065, y: 585, labelKr: '우측 전방' },
 };
 
 export interface WaveSpawnGroup {

@@ -9,6 +9,9 @@ export class BootScene extends Phaser.Scene {
   }
 
   public preload(): void {
+    // Stage 1 16-bit pixel-art ancient Chinese fortress courtyard arena background
+    this.load.image('mayhem_arena_bg', '../assets/maps/mayhem_arena_bg.png');
+
     // 8-direction chibi Zhao Yun spritesheet (E, SE, S, SW, W, NW, N, NE)
     this.load.spritesheet('zhaoyun_8dir', '../assets/sprites/zhaoyun_8dir.png', {
       frameWidth: 128,
@@ -24,8 +27,41 @@ export class BootScene extends Phaser.Scene {
       frameWidth: 160,
       frameHeight: 160,
     });
-    // 4-type 2-head-tall enemy spritesheet (frame 0 = blue-uniformed bandit)
+
+    // High-craft 16-bit chibi pixel art sheets for Guan Yu, Zhang Fei, Huang Zhong
+    this.load.spritesheet('guanyu_sheet', '../assets/sprites/guanyu_sheet.png', {
+      frameWidth: 160,
+      frameHeight: 160,
+    });
+    this.load.spritesheet('zhangfei_sheet', '../assets/sprites/zhangfei_sheet.png', {
+      frameWidth: 160,
+      frameHeight: 160,
+    });
+    this.load.spritesheet('huangzhong_sheet', '../assets/sprites/huangzhong_sheet.png', {
+      frameWidth: 160,
+      frameHeight: 160,
+    });
+
+    // Varied Bandits + comedic poses, legacy 4-type enemies, and Bandit Chief Boss
+    this.load.spritesheet('bandits_varied', '../assets/sprites/bandits_varied.png', {
+      frameWidth: 160,
+      frameHeight: 160,
+    });
     this.load.spritesheet('enemies_4types', '../assets/sprites/enemies_4types.png', {
+      frameWidth: 160,
+      frameHeight: 160,
+    });
+    this.load.spritesheet('boss_chief_sheet', '../assets/sprites/boss_chief_sheet.png', {
+      frameWidth: 192,
+      frameHeight: 192,
+    });
+
+    // 16-bit Interactive Marketplace Props & Comic Combat VFX sheets
+    this.load.spritesheet('mayhem_props', '../assets/sprites/mayhem_props.png', {
+      frameWidth: 128,
+      frameHeight: 128,
+    });
+    this.load.spritesheet('combat_vfx', '../assets/sprites/combat_vfx.png', {
       frameWidth: 160,
       frameHeight: 160,
     });

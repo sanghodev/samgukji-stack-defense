@@ -31,7 +31,9 @@ export class TreasurePickup {
     this.ring.lineStyle(2.5, 0xfacc15, 0.85);
     this.ring.strokeEllipse(0, 4, 52, 20);
 
-    this.sprite = scene.add.image(0, -18, 'treasure_chest_icon').setOrigin(0.5);
+    this.sprite = scene.textures.exists('mayhem_props')
+      ? scene.add.image(0, -22, 'mayhem_props', 6).setOrigin(0.5).setScale(0.52)
+      : scene.add.image(0, -18, 'treasure_chest_icon').setOrigin(0.5);
     this.label = scene.add
       .text(0, -48, `✨ ${labelKr}`, {
         fontFamily: 'Malgun Gothic, Apple SD Gothic Neo, sans-serif',
