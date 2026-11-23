@@ -763,7 +763,30 @@ test('All 4 heroes define 3 unique signature skills including elemental emergenc
   assert.equal(HERO_DATA.huangzhong.skill3Element, 'SOLAR');
 });
 
+import { ENV_OBJECT_SPECS } from '../src/config/mayhemConfig.ts';
+import { BANDIT_ARCHETYPES } from '../src/config/step4Config.ts';
 
+test('All 11 street-market goods and 10 diverse enemy archetypes (archer, bomber, grappler, soldier) are configured properly', () => {
+  const newGoods = ['silk_bolts', 'fish_tub', 'meat_stall', 'grain_sack', 'bean_sack', 'spice_stall'] as const;
+  assert.equal(Object.keys(ENV_OBJECT_SPECS).length, 11);
+  for (const kind of newGoods) {
+    const spec = ENV_OBJECT_SPECS[kind];
+    assert.ok(spec && spec.label.length > 0 && spec.durability >= 1);
+    const wreck = getWreckageFramesForKind(kind);
+    assert.ok(wreck.length >= 1);
+    assert.equal(wreck[0].textureKey, 'market_goods');
+  }
+  assert.equal(ENV_OBJECT_SPECS.fish_tub.containsWater, true);
+  assert.equal(ENV_OBJECT_SPECS.bean_sack.spillsFood, true);
+  assert.equal(ENV_OBJECT_SPECS.silk_bolts.material, 'cloth');
+  assert.equal(ENV_OBJECT_SPECS.grain_sack.material, 'sack');
 
-
-
+  assert.equal(Object.keys(BANDIT_ARCHETYPES).length, 10);
+  assert.equal(pickEnemySkillForArchetype('archer', 240), 'ARROW_SHOT');
+  assert.equal(pickEnemySkillForArchetype('archer', 70), 'NONE');
+  assert.equal(pickEnemySkillForArchetype('bomber', 220), 'BOMB_THROW');
+  assert.equal(pickEnemySkillForArchetype('bomber', 60), 'NONE');
+  assert.equal(pickEnemySkillForArchetype('grappler', 90), 'BEAR_HUG');
+  assert.equal(pickEnemySkillForArchetype('grappler', 250), 'NONE');
+  assert.equal(pickEnemySkillForArchetype('soldier', 150), 'DASH_CLEAVE');
+});

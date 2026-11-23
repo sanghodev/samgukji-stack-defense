@@ -158,9 +158,11 @@ export class Warrior {
   public hp: number;
   public isDefeated = false;
 
-  // Hero defensive / knockdown / dizzy state
+  // Hero defensive / knockdown / dizzy / grabbed state
   public bodyState: HeroBodyState = 'NORMAL';
   public dizzyTimerMs = 0;
+  public grabbedById: string | null = null;
+  public grabEscapeHits = 0;
 
   // Combat state
   public attackPhase: AttackPhase = 'NONE';
@@ -682,7 +684,8 @@ export class Warrior {
       return false;
     }
 
-    // Emergency escape: break DIZZY / KNOCKDOWN / AIRBORNE / ATTACK immediately!
+    // Emergency escape: break GRAB / DIZZY / KNOCKDOWN / AIRBORNE / ATTACK immediately!
+    this.releaseGrab();
     this.bodyState = 'NORMAL';
     this.bodyStateTimerMs = 0;
     this.dizzyTimerMs = 0;
@@ -715,6 +718,65 @@ export class Warrior {
     this.ultimatePoseTimerMs = 680;
 
     this.callbacks.onHeroSkill3Ultimate?.(this);
+    return true;
+  }
+
+  public get isGrabbed(): boolean {
+    return this.grabbedById !== null;
+  }
+
+  /**
+   * Called when a Giant Grappler latches onto this hero in a Bear-Hug!
+   * Guarding, invulnerability, charging, or already being grabbed/knocked down resists it.
+   */
+  public beginGrabbed(grapplerId: string): boolean {
+    if (
+      this.isDefeated ||
+      this.isGrabbed ||
+      this.invulnTimerMs > 0 ||
+      this.bodyState !== 'NORMAL' ||
+      this.isCharging ||
+      this.whiteDragonTimerMs > 0 ||
+      this.cycloneTimerMs > 0
+    ) {
+      return false;
+    }
+    this.dropCarriedObject();
+    this.cancelAttack();
+    this.grabbedById = grapplerId;
+    this.grabEscapeHits = 0;
+    this.vx = 0;
+    this.vy = 0;
+    return true;
+  }
+
+  public releaseGrab(): void {
+    this.grabbedById = null;
+    this.grabEscapeHits = 0;
+    this.sprite.x = 0;
+    this.sprite.rotation = 0;
+  }
+
+  /**
+   * Anchors a grabbed hero in the grappler's bear-hug and applies a squeeze tick
+   * without triggering knockback. Returns false if the hero escaped or was defeated.
+   */
+  public applyGrabSqueeze(damage: number, anchorX: number, anchorY: number): boolean {
+    if (!this.isGrabbed || this.isDefeated) return false;
+    const clamped = clampToArena(anchorX, anchorY, this.collisionRadius);
+    this.x = clamped.x;
+    this.y = clamped.y;
+    const dmg = Math.max(1, Math.round(damage));
+    this.hp = Math.max(0, this.hp - dmg);
+    this.hurtFlashTimerMs = 110;
+    if (this.hp <= 0) {
+      this.isDefeated = true;
+      this.releaseGrab();
+      this.bodyState = 'KNOCKDOWN';
+      this.callbacks.onHeroHurt(this, dmg);
+      return false;
+    }
+    this.callbacks.onHeroHurt(this, dmg);
     return true;
   }
 
@@ -922,6 +984,7 @@ export class Warrior {
     this.hp = this.maxHp;
     this.isDefeated = false;
     this.bodyState = 'NORMAL';
+    this.releaseGrab();
     this.bodyStateTimerMs = 0;
     this.dizzyTimerMs = 0;
     this.pendingDizzyMs = 0;
@@ -993,11 +1056,56 @@ export class Warrior {
     this.updatePowerAuraVisuals(dt, deltaMs);
 
     if (this.isDefeated) {
+      this.releaseGrab();
       this.vx *= Math.exp(-8 * dt);
       this.vy *= Math.exp(-8 * dt);
       this.guardShieldSprite?.setVisible(false);
       this.dizzyGfx.clear();
       this.applyKoPoseVisual(0);
+      this.syncTransform();
+      return;
+    }
+
+    // 0. Held in a Giant Grappler's Bear-Hug! Struggle furiously; mashing breaks free!
+    if (this.isGrabbed) {
+      this.guardShieldSprite?.setVisible(false);
+      this.vx = 0;
+      this.vy = 0;
+      if (
+        input.lightAttackPressed ||
+        input.heavyAttackPressed ||
+        input.interactPressed ||
+        input.specialPressed
+      ) {
+        this.grabEscapeHits += 1;
+      }
+      this.dizzyPhase += dt * 22;
+      const shake = Math.sin(this.dizzyPhase);
+      const baseS = this.heroId === 'zhaoyun' ? this.zhaoYunDirScale : this.customSheetScale;
+      if (this.scene.textures.exists('hero_dizzy_poses')) {
+        const idx =
+          this.heroId === 'zhaoyun'
+            ? 0
+            : this.heroId === 'guanyu'
+              ? 1
+              : this.heroId === 'zhangfei'
+                ? 2
+                : 3;
+        this.sprite.setTexture('hero_dizzy_poses', idx);
+        this.sprite.setScale(this.customSheetScale * 0.94, this.customSheetScale * 1.08);
+      } else {
+        this.sprite.setScale(baseS * 0.92, baseS * 1.08);
+      }
+      this.sprite.x = shake * 4.2;
+      this.sprite.y = -4 + Math.abs(shake) * 3;
+      this.sprite.rotation = shake * 0.14;
+      if (this.hurtFlashTimerMs > 0) this.sprite.setTintFill(0xffffff);
+      else this.sprite.clearTint();
+
+      if (this.grabEscapeHits >= 4) {
+        this.releaseGrab();
+        this.invulnTimerMs = 550;
+      }
       this.syncTransform();
       return;
     }

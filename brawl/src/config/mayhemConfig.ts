@@ -3,7 +3,13 @@ export type EnvObjectKind =
   | 'barrel_water'
   | 'barrel_empty'
   | 'ceramic_jar'
-  | 'fruit_basket';
+  | 'fruit_basket'
+  | 'silk_bolts'
+  | 'fish_tub'
+  | 'meat_stall'
+  | 'grain_sack'
+  | 'bean_sack'
+  | 'spice_stall';
 
 export type HazardKind = 'water_puddle' | 'spilled_food' | 'banana_peel';
 
@@ -19,7 +25,7 @@ export interface EnvObjectSpec {
   readonly impactDamage: number;
   readonly knockbackForce: number;
   readonly launchVz: number;
-  readonly material: 'wood' | 'ceramic' | 'fruit';
+  readonly material: 'wood' | 'ceramic' | 'fruit' | 'cloth' | 'sack';
   readonly containsWater: boolean;
   readonly spillsFood: boolean;
 }
@@ -102,6 +108,102 @@ export const ENV_OBJECT_SPECS: Record<EnvObjectKind, EnvObjectSpec> = {
     knockbackForce: 210,
     launchVz: 110,
     material: 'fruit',
+    containsWater: false,
+    spillsFood: true,
+  },
+  silk_bolts: {
+    kind: 'silk_bolts',
+    label: '비단 꾸러미',
+    mass: 1.4,
+    radius: 26,
+    durability: 2,
+    pickupable: true,
+    rollable: false,
+    carrySpeedFactor: 0.88,
+    impactDamage: 25,
+    knockbackForce: 290,
+    launchVz: 160,
+    material: 'cloth',
+    containsWater: false,
+    spillsFood: false,
+  },
+  fish_tub: {
+    kind: 'fish_tub',
+    label: '생선 통',
+    mass: 1.8,
+    radius: 25,
+    durability: 2,
+    pickupable: true,
+    rollable: true,
+    carrySpeedFactor: 0.84,
+    impactDamage: 28,
+    knockbackForce: 350,
+    launchVz: 190,
+    material: 'wood',
+    containsWater: true,
+    spillsFood: true,
+  },
+  meat_stall: {
+    kind: 'meat_stall',
+    label: '정육점 도마',
+    mass: 2.3,
+    radius: 27,
+    durability: 2,
+    pickupable: true,
+    rollable: false,
+    carrySpeedFactor: 0.81,
+    impactDamage: 35,
+    knockbackForce: 430,
+    launchVz: 240,
+    material: 'wood',
+    containsWater: false,
+    spillsFood: true,
+  },
+  grain_sack: {
+    kind: 'grain_sack',
+    label: '쌀 푸대자루',
+    mass: 1.5,
+    radius: 24,
+    durability: 1,
+    pickupable: true,
+    rollable: false,
+    carrySpeedFactor: 0.88,
+    impactDamage: 26,
+    knockbackForce: 320,
+    launchVz: 175,
+    material: 'sack',
+    containsWater: false,
+    spillsFood: false,
+  },
+  bean_sack: {
+    kind: 'bean_sack',
+    label: '콩자루',
+    mass: 1.3,
+    radius: 23,
+    durability: 1,
+    pickupable: true,
+    rollable: false,
+    carrySpeedFactor: 0.90,
+    impactDamage: 22,
+    knockbackForce: 270,
+    launchVz: 145,
+    material: 'sack',
+    containsWater: false,
+    spillsFood: true,
+  },
+  spice_stall: {
+    kind: 'spice_stall',
+    label: '향신료 가판대',
+    mass: 1.4,
+    radius: 24,
+    durability: 1,
+    pickupable: true,
+    rollable: false,
+    carrySpeedFactor: 0.89,
+    impactDamage: 24,
+    knockbackForce: 285,
+    launchVz: 155,
+    material: 'wood',
     containsWater: false,
     spillsFood: true,
   },

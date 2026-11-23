@@ -84,15 +84,22 @@ export class Projectile {
 
     this.shadow = scene.add.ellipse(0, 2, 26, 7, 0x1a120b, 0.32);
     const isDagger = cfg.textureKey === 'enemy_dagger';
+    const isEnemyArrow = cfg.textureKey === 'enemy_arrow';
     if (scene.textures.exists('combat_vfx')) {
       const isWind = cfg.textureKey === 'wind_blade_projectile';
       this.sprite = scene.add.image(0, -28, 'combat_vfx', isWind ? 1 : 3);
-      this.sprite.setScale(isWind ? 0.62 : isDagger ? 0.42 : cfg.penetrating ? 0.56 : 0.44);
-      if (isDagger) {
-        this.sprite.setTint(cfg.tint ?? 0xf43f5e);
+      this.sprite.setScale(
+        isWind ? 0.62 : isDagger ? 0.42 : isEnemyArrow ? 0.48 : cfg.penetrating ? 0.56 : 0.44,
+      );
+      if (isDagger || isEnemyArrow) {
+        this.sprite.setTint(cfg.tint ?? (isEnemyArrow ? 0xfb923c : 0xf43f5e));
       }
     } else {
-      this.sprite = scene.add.image(0, -26, isDagger ? 'arrow_projectile' : (cfg.textureKey ?? 'arrow_projectile'));
+      this.sprite = scene.add.image(
+        0,
+        -26,
+        isDagger || isEnemyArrow ? 'arrow_projectile' : (cfg.textureKey ?? 'arrow_projectile'),
+      );
       if (cfg.penetrating) {
         this.sprite.setScale(1.35, 1.35);
       }

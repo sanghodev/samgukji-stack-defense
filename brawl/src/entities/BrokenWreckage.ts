@@ -48,6 +48,7 @@ export class BrokenWreckage {
     vy: number,
     vz: number,
     baseScale = 0.56,
+    textureKey = 'broken_wreckage',
   ) {
     this.id = id;
     this.frameIndex = frameIndex;
@@ -62,9 +63,10 @@ export class BrokenWreckage {
     this.vz = vz;
     this.spinSpeed = (Math.random() < 0.5 ? -1 : 1) * (4 + Math.random() * 6);
 
+    const resolvedKey = scene.textures.exists(textureKey) ? textureKey : 'broken_wreckage';
     this.shadow = scene.add.ellipse(0, 3, 44 * baseScale * 1.4, 14 * baseScale * 1.3, 0x1a120b, 0.34);
     this.sprite = scene.add
-      .image(0, 4, 'broken_wreckage', frameIndex)
+      .image(0, 4, resolvedKey, frameIndex)
       .setOrigin(0.5, 0.88)
       .setScale(baseScale);
 

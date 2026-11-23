@@ -43,6 +43,7 @@ export type BanditState =
   | 'ATTACK_RECOVERY'
   | 'SKILL_WINDUP'
   | 'SKILL_ACTIVE'
+  | 'GRABBING'
   | 'HURT'
   | 'KNOCKBACK'
   | 'KNOCKDOWN'
@@ -77,6 +78,11 @@ export interface BanditCallbacks {
     causesDizzy: boolean,
   ) => void;
   onThrowDagger?: (bandit: Bandit, dirX: number, dirY: number, damage: number) => void;
+  onShootArrow?: (bandit: Bandit, dirX: number, dirY: number, damage: number) => void;
+  onThrowBomb?: (bandit: Bandit, targetX: number, targetY: number, damage: number) => void;
+  onTryGrabHero?: (bandit: Bandit) => string | null;
+  onGrabSqueezeHero?: (bandit: Bandit, heroId: string, damage: number) => boolean;
+  onReleaseGrabHero?: (bandit: Bandit, heroId: string) => void;
   onLanded: (bandit: Bandit, impactSpeed: number) => void;
   onDefeated: (bandit: Bandit) => void;
   onPanic: (bandit: Bandit) => void;
@@ -88,10 +94,9 @@ export interface BanditCallbacks {
 }
 
 /**
- * Cute 2-head-tall bandit with 6 data-driven comedic personalities,
- * grounded running & weapon-swing animation, higher-tier combat skills,
- * fear/panic hysteresis, fleeing, running trips, cover hiding/peeking,
- * surrendering, and rare camera-glass gag integration.
+ * Cute 2-head-tall enemy with 10 archetypes & 11 distinct animated appearances
+ * (bandits, archers, bombers, giant grapplers, shadow assassins, axe raiders,
+ * horned captains, and armored regular army soldiers/halberdiers).
  */
 export class Bandit {
   public readonly id: string;
@@ -143,6 +148,7 @@ export class Bandit {
   private readonly hitTracker = new CombatHitTracker();
 
   private readonly baseSpriteScale: number;
+  private readonly animSheetKey: 'bandit_anim_sheet' | 'diverse_enemies_anim';
   private readonly animRowIndex: number;
   private stateTimerMs = 0;
   private walkPhase = 0;
@@ -160,6 +166,10 @@ export class Bandit {
   private activeSkill: EnemySkillKind = 'NONE';
   private skillCooldownMs = 2600;
   private skillPulseCount = 0;
+  private bombTargetX = 640;
+  private bombTargetY = 500;
+  private grabbedHeroId: string | null = null;
+  private grabSqueezeTickMs = 0;
 
   constructor(
     scene: Phaser.Scene,
@@ -180,7 +190,9 @@ export class Bandit {
     this.mass = this.spec.mass;
     // Regular bandits stay distinctly smaller than heroes so playable heroes always stand out!
     this.baseSpriteScale = 0.56 * this.spec.scaleMul;
-    this.animRowIndex = this.resolveAnimRowIndex(archetype, slotIndex);
+    const animInfo = this.resolveAnimSheetAndRow(archetype, slotIndex);
+    this.animSheetKey = animInfo.sheet;
+    this.animRowIndex = animInfo.row;
 
     this.x = spawnX;
     this.y = spawnY;
@@ -754,11 +766,27 @@ export class Bandit {
         }
 
         const flank = coordinator.getFlankOffset(this.slotIndex);
-        // Sneaky bandits try to circle behind the player's back
-        const ox = this.archetype === 'sneaky' ? -flank.ox * 1.15 : flank.ox;
-        const oy = this.archetype === 'sneaky' ? -Math.abs(flank.oy) : flank.oy;
-        const goalX = playerX + ox;
-        const goalY = playerY + oy;
+        const isRangedSpecialist = this.archetype === 'archer' || this.archetype === 'bomber';
+        const toPlayerX0 = playerX - this.x;
+        const toPlayerY0 = playerY - this.y;
+        const distPlayer0 = Math.hypot(toPlayerX0, toPlayerY0 / PERSPECTIVE_CONFIG.verticalMoveRatio);
+
+        let goalX = playerX + (this.archetype === 'sneaky' ? -flank.ox * 1.15 : flank.ox);
+        let goalY = playerY + (this.archetype === 'sneaky' ? -Math.abs(flank.oy) : flank.oy);
+        if (isRangedSpecialist) {
+          // Archers & Bombers maintain safe mid-range kiting spacing (~190..310px)!
+          const awayX = this.x - playerX;
+          const awayY = this.y - playerY;
+          const aLen = Math.hypot(awayX, awayY) || 1;
+          const desiredDist = this.archetype === 'archer' ? 275 : 230;
+          if (distPlayer0 < 135) {
+            goalX = this.x + (awayX / aLen) * 120;
+            goalY = this.y + (awayY / aLen) * 75;
+          } else {
+            goalX = playerX + (awayX / aLen) * desiredDist + flank.ox * 0.4;
+            goalY = playerY + (awayY / aLen) * desiredDist * 0.68 + flank.oy * 0.5;
+          }
+        }
         const dxGoal = goalX - this.x;
         const dyGoal = goalY - this.y;
         const distGoal = Math.hypot(dxGoal, dyGoal);
@@ -767,7 +795,7 @@ export class Bandit {
         const speedFactor = getDepthSpeedFactor(this.y);
         const moveSpd = this.tuning.enemyMoveSpeed * speedFactor * this.spec.aggression;
 
-        if (distGoal > 14) {
+        if (distGoal > 18) {
           this.vx = (dxGoal / distGoal) * moveSpd + sep.x;
           this.vy = (dyGoal / distGoal) * moveSpd * PERSPECTIVE_CONFIG.verticalMoveRatio + sep.y;
           this.x += this.vx * dt;
@@ -791,15 +819,21 @@ export class Bandit {
         const distPlayer = Math.hypot(toPlayerX, toPlayerY / PERSPECTIVE_CONFIG.verticalMoveRatio);
         if (Math.abs(toPlayerX) > 4) this.facingDirX = Math.sign(toPlayerX);
 
-        // Higher-tier enemies (Elite, Stubborn Veteran, Sneaky Assassin, Overconfident) cast combat skills!
+        // Specialist & higher-tier enemy combat skills!
         if (this.skillCooldownMs <= 0 && this.fearState === 'CALM') {
           const pickedSkill = pickEnemySkillForArchetype(this.archetype, distPlayer);
           if (pickedSkill !== 'NONE') {
-            const needsToken = pickedSkill !== 'DAGGER_THROW' && this.archetype !== 'elite';
+            const isFreeRanged =
+              pickedSkill === 'DAGGER_THROW' ||
+              pickedSkill === 'ARROW_SHOT' ||
+              pickedSkill === 'BOMB_THROW';
+            const needsToken = !isFreeRanged && this.archetype !== 'elite' && this.archetype !== 'grappler';
             if (!needsToken || coordinator.requestAttackToken(this.id)) {
               const dLen = Math.hypot(toPlayerX, toPlayerY) || 1;
               this.attackDirX = toPlayerX / dLen;
               this.attackDirY = toPlayerY / dLen;
+              this.bombTargetX = playerX;
+              this.bombTargetY = playerY;
               this.vx = 0;
               this.vy = 0;
               this.activeSkill = pickedSkill;
@@ -808,28 +842,23 @@ export class Bandit {
               this.stateTimerMs =
                 pickedSkill === 'GROUND_SLAM'
                   ? 720
-                  : pickedSkill === 'WHIRLWIND'
-                    ? 620
-                    : pickedSkill === 'DASH_CLEAVE'
-                      ? 580
-                      : 480;
+                  : pickedSkill === 'BOMB_THROW'
+                    ? 660
+                    : pickedSkill === 'WHIRLWIND'
+                      ? 620
+                      : pickedSkill === 'BEAR_HUG'
+                        ? 540
+                        : pickedSkill === 'DASH_CLEAVE'
+                          ? 580
+                          : 500;
               this.telegraphText.setVisible(true);
-              const shoutMap: Record<Exclude<EnemySkillKind, 'NONE'>, [string, string]> = {
-                WHIRLWIND: ['회오리 강타!', '#f87171'],
-                GROUND_SLAM: ['박살내주마!', '#fb923c'],
-                DASH_CLEAVE: ['돌격 베기!', '#facc15'],
-                DAGGER_THROW: ['표창 받아라!', '#e879f9'],
-              };
-              const [label, col] = shoutMap[pickedSkill];
-              this.reactionText.setText(label);
-              this.reactionText.setColor(col);
-              this.reactionText.setVisible(true);
               break;
             }
           }
         }
 
         if (
+          !isRangedSpecialist &&
           distPlayer <= BANDIT_COMBAT_CONFIG.attackRange + 14 &&
           this.personalAttackCooldownMs <= 0 &&
           coordinator.requestAttackToken(this.id)
@@ -858,7 +887,7 @@ export class Bandit {
             this,
             this.attackDirX,
             this.attackDirY,
-            this.archetype === 'elite',
+            this.archetype === 'elite' || this.archetype === 'overconfident',
           );
         }
         break;
@@ -922,9 +951,11 @@ export class Bandit {
               ? 520
               : this.activeSkill === 'DASH_CLEAVE'
                 ? 360
-                : this.activeSkill === 'GROUND_SLAM'
-                  ? 260
-                  : 220;
+                : this.activeSkill === 'BEAR_HUG'
+                  ? 340
+                  : this.activeSkill === 'GROUND_SLAM'
+                    ? 260
+                    : 220;
         }
         break;
       }
@@ -934,7 +965,6 @@ export class Bandit {
         const scale = getPerspectiveScale(this.y);
 
         if (this.activeSkill === 'WHIRLWIND') {
-          // Rapid spinning cleave while drifting toward target!
           const toX = playerX - this.x;
           const toY = playerY - this.y;
           const len = Math.hypot(toX, toY) || 1;
@@ -999,17 +1029,81 @@ export class Bandit {
             this.skillPulseCount = 1;
             this.callbacks.onThrowDagger?.(this, this.attackDirX, this.attackDirY, 13);
           }
+        } else if (this.activeSkill === 'ARROW_SHOT') {
+          if (this.skillPulseCount === 0) {
+            this.skillPulseCount = 1;
+            this.callbacks.onShootArrow?.(this, this.attackDirX, this.attackDirY, 14);
+          }
+        } else if (this.activeSkill === 'BOMB_THROW') {
+          if (this.skillPulseCount === 0) {
+            this.skillPulseCount = 1;
+            this.callbacks.onThrowBomb?.(this, this.bombTargetX, this.bombTargetY, 22);
+          }
+        } else if (this.activeSkill === 'BEAR_HUG') {
+          // Giant Grappler lunges forward with wide-open hands to latch onto a hero!
+          const lungeSpd = 320 * scale;
+          this.x += this.attackDirX * lungeSpd * dt;
+          this.y += this.attackDirY * lungeSpd * PERSPECTIVE_CONFIG.verticalMoveRatio * dt;
+          if (this.skillPulseCount === 0) {
+            const grabbedId = this.callbacks.onTryGrabHero?.(this) ?? null;
+            if (grabbedId) {
+              this.skillPulseCount = 1;
+              this.grabbedHeroId = grabbedId;
+              this.activeSkill = 'NONE';
+              this.state = 'GRABBING';
+              this.stateTimerMs = 2400;
+              this.grabSqueezeTickMs = 380;
+              this.vx = 0;
+              this.vy = 0;
+              break;
+            }
+          }
         }
 
         if (this.stateTimerMs <= 0) {
           this.activeSkill = 'NONE';
           this.skillCooldownMs =
-            this.archetype === 'elite'
-              ? 4200 + Math.random() * 1800
-              : 5200 + Math.random() * 2400;
+            this.archetype === 'archer'
+              ? 2400 + Math.random() * 1100
+              : this.archetype === 'bomber'
+                ? 3300 + Math.random() * 1400
+                : this.archetype === 'grappler'
+                  ? 3800 + Math.random() * 1400
+                  : this.archetype === 'elite'
+                    ? 4200 + Math.random() * 1800
+                    : 5200 + Math.random() * 2400;
           this.state = 'ATTACK_RECOVERY';
           this.stateTimerMs = 340;
           coordinator.releaseAttackToken(this.id);
+        }
+        break;
+      }
+
+      case 'GRABBING': {
+        this.stateTimerMs -= deltaMs;
+        this.grabSqueezeTickMs -= deltaMs;
+        this.vx = 0;
+        this.vy = 0;
+
+        if (!this.grabbedHeroId || this.stateTimerMs <= 0) {
+          this.releaseActiveGrab();
+          this.skillCooldownMs = 4600;
+          this.state = 'ATTACK_RECOVERY';
+          this.stateTimerMs = 420;
+          coordinator.releaseAttackToken(this.id);
+          break;
+        }
+
+        if (this.grabSqueezeTickMs <= 0) {
+          this.grabSqueezeTickMs = 460;
+          const stillHeld = this.callbacks.onGrabSqueezeHero?.(this, this.grabbedHeroId, 7) ?? false;
+          if (!stillHeld) {
+            this.grabbedHeroId = null;
+            this.skillCooldownMs = 4600;
+            this.state = 'ATTACK_RECOVERY';
+            this.stateTimerMs = 420;
+            coordinator.releaseAttackToken(this.id);
+          }
         }
         break;
       }
@@ -1273,9 +1367,18 @@ export class Bandit {
     this.syncVisuals();
   }
 
+  private releaseActiveGrab(): void {
+    if (this.grabbedHeroId) {
+      const heroId = this.grabbedHeroId;
+      this.grabbedHeroId = null;
+      this.callbacks.onReleaseGrabHero?.(this, heroId);
+    }
+  }
+
   private clearSkillTelegraph(): void {
     this.activeSkill = 'NONE';
     this.skillTelegraphGfx.clear();
+    this.releaseActiveGrab();
   }
 
   private drawSkillTelegraph(): void {
@@ -1305,6 +1408,28 @@ export class Bandit {
       const ey = this.attackDirY * len * PERSPECTIVE_CONFIG.verticalMoveRatio;
       this.skillTelegraphGfx.lineStyle(3, 0xe879f9, 0.85 * pulse);
       this.skillTelegraphGfx.lineBetween(0, -24, ex, ey - 24);
+    } else if (this.activeSkill === 'ARROW_SHOT') {
+      const len = 300;
+      const ex = this.attackDirX * len;
+      const ey = this.attackDirY * len * PERSPECTIVE_CONFIG.verticalMoveRatio;
+      this.skillTelegraphGfx.lineStyle(3, 0xfbbf24, 0.85 * pulse);
+      this.skillTelegraphGfx.lineBetween(0, -26, ex, ey - 26);
+    } else if (this.activeSkill === 'BOMB_THROW') {
+      const scale = Math.max(0.5, getPerspectiveScale(this.y));
+      const lx = (this.bombTargetX - this.x) / scale;
+      const ly = (this.bombTargetY - this.y) / scale;
+      this.skillTelegraphGfx.fillStyle(0xf97316, 0.2 * pulse);
+      this.skillTelegraphGfx.fillEllipse(lx, ly, 136, 78);
+      this.skillTelegraphGfx.lineStyle(3, 0xef4444, 0.92 * pulse);
+      this.skillTelegraphGfx.strokeEllipse(lx, ly, 136, 78);
+    } else if (this.activeSkill === 'BEAR_HUG') {
+      const len = 115;
+      const ex = this.attackDirX * len;
+      const ey = this.attackDirY * len * PERSPECTIVE_CONFIG.verticalMoveRatio;
+      this.skillTelegraphGfx.lineStyle(26, 0xdc2626, 0.26 * pulse);
+      this.skillTelegraphGfx.lineBetween(0, 0, ex, ey);
+      this.skillTelegraphGfx.lineStyle(4, 0xfca5a5, 0.92 * pulse);
+      this.skillTelegraphGfx.lineBetween(0, 0, ex, ey);
     }
   }
 
@@ -1449,34 +1574,53 @@ export class Bandit {
   }
 
   /**
-   * Maps each bandit archetype to its dedicated row in `bandit_anim_sheet` (5 rows × 6 cols):
-   * 0=Sword Bandit, 1=Club Bandit, 2=Horned Spiked-Mace Elite, 3=Red-Scarf Ninja Assassin, 4=Shield & Sabre Veteran
+   * Maps each of the 10 enemy archetypes across our two 6-column animated sprite sheets
+   * (`bandit_anim_sheet` 5 rows + `diverse_enemies_anim` 6 rows = 11 distinct enemy looks!):
+   * - `bandit_anim_sheet`: 0=Sword Bandit, 1=Club Bandit, 2=Horned Mace Elite, 3=Ninja Assassin, 4=Shield Sabre Veteran
+   * - `diverse_enemies_anim`: 0=Straw-Hat Archer, 1=Goggles Bomber, 2=Giant Sumo Grappler,
+   *   3=Armored Regular Army Soldier, 4=Mohawk Axe Raider, 5=Heavy Gilded Halberd Guard
    */
-  private resolveAnimRowIndex(archetype: BanditArchetype, slotIndex: number): number {
+  private resolveAnimSheetAndRow(
+    archetype: BanditArchetype,
+    slotIndex: number,
+  ): { sheet: 'bandit_anim_sheet' | 'diverse_enemies_anim'; row: number } {
     switch (archetype) {
-      case 'clumsy':
-        return 1;
-      case 'elite':
-        return 2;
-      case 'sneaky':
-        return 3;
-      case 'stubborn':
-        return 4;
+      case 'archer':
+        return { sheet: 'diverse_enemies_anim', row: 0 };
+      case 'bomber':
+        return { sheet: 'diverse_enemies_anim', row: 1 };
+      case 'grappler':
+        return { sheet: 'diverse_enemies_anim', row: 2 };
+      case 'soldier':
+        return { sheet: 'diverse_enemies_anim', row: 3 };
       case 'overconfident':
-        return slotIndex % 2 === 0 ? 0 : 1;
+        return { sheet: 'diverse_enemies_anim', row: 4 };
+      case 'elite':
+        return slotIndex % 2 === 0
+          ? { sheet: 'bandit_anim_sheet', row: 2 }
+          : { sheet: 'diverse_enemies_anim', row: 5 };
+      case 'clumsy':
+        return { sheet: 'bandit_anim_sheet', row: 1 };
+      case 'sneaky':
+        return { sheet: 'bandit_anim_sheet', row: 3 };
+      case 'stubborn':
+        return { sheet: 'bandit_anim_sheet', row: 4 };
       case 'coward':
       default:
-        return 0;
+        return { sheet: 'bandit_anim_sheet', row: 0 };
     }
   }
 
   /**
    * Resolves a frame column (0=IDLE, 1..3=RUN_A/B/C, 4=ATTACK_WINDUP, 5=ATTACK_SWING)
-   * on `bandit_anim_sheet`, falling back gracefully if needed.
+   * on the enemy's assigned animated sheet, falling back gracefully if needed.
    */
   private resolveAnimPose(col: number): { tex: string; frame: number } {
+    if (this.scene.textures.exists(this.animSheetKey)) {
+      return { tex: this.animSheetKey, frame: this.animRowIndex * 6 + col };
+    }
     if (this.scene.textures.exists('bandit_anim_sheet')) {
-      return { tex: 'bandit_anim_sheet', frame: this.animRowIndex * 6 + col };
+      return { tex: 'bandit_anim_sheet', frame: (this.animRowIndex % 5) * 6 + col };
     }
     return this.resolveBaseTextureAndFrame();
   }
@@ -1525,10 +1669,14 @@ export class Bandit {
       const glow =
         this.activeSkill === 'DAGGER_THROW'
           ? 0xf0abfc
-          : this.activeSkill === 'DASH_CLEAVE'
+          : this.activeSkill === 'DASH_CLEAVE' || this.activeSkill === 'ARROW_SHOT'
             ? 0xfde047
-            : 0xfca5a5;
+            : this.activeSkill === 'BOMB_THROW'
+              ? 0xfb923c
+              : 0xfca5a5;
       this.sprite.setTint(glow);
+    } else if (this.state === 'GRABBING') {
+      this.sprite.setTint(0xfecaca);
     } else if (this.state === 'ATTACK_WINDUP') {
       this.sprite.setTint(0xffb4a2);
     } else if (!hasVaried && this.spec.tintColor !== null) {
@@ -1563,8 +1711,9 @@ export class Bandit {
       case 'FLEE':
       case 'MOVING_TO_COVER': {
         // Grounded frantic sprint with terrified sweat-drop expression
-        if (hasVaried) this.setPoseTexture('bandits_varied', 1);
-        else {
+        if (hasVaried && this.animSheetKey === 'bandit_anim_sheet') {
+          this.setPoseTexture('bandits_varied', 1);
+        } else {
           const strideCols = [1, 2, 3, 2];
           const stepIdx = Math.floor(this.walkPhase * 1.4) % strideCols.length;
           const pose = this.resolveAnimPose(strideCols[stepIdx]);
@@ -1575,8 +1724,11 @@ export class Bandit {
         break;
       }
       case 'HIDING': {
-        if (hasVaried) this.setPoseTexture('bandits_varied', 1);
-        else this.setPoseTexture(idlePose.tex, idlePose.frame);
+        if (hasVaried && this.animSheetKey === 'bandit_anim_sheet') {
+          this.setPoseTexture('bandits_varied', 1);
+        } else {
+          this.setPoseTexture(idlePose.tex, idlePose.frame);
+        }
         const tremble = Math.sin(performance.now() * 0.03) * 1.5;
         spriteY = 14;
         sx = this.baseSpriteScale * 1.04;
@@ -1585,8 +1737,11 @@ export class Bandit {
         break;
       }
       case 'PEEKING': {
-        if (hasVaried) this.setPoseTexture('bandits_varied', 1);
-        else this.setPoseTexture(idlePose.tex, idlePose.frame);
+        if (hasVaried && this.animSheetKey === 'bandit_anim_sheet') {
+          this.setPoseTexture('bandits_varied', 1);
+        } else {
+          this.setPoseTexture(idlePose.tex, idlePose.frame);
+        }
         spriteY = 6;
         sx = this.baseSpriteScale * 0.96;
         sy = this.baseSpriteScale * 0.92;
@@ -1630,9 +1785,22 @@ export class Bandit {
         sy = this.baseSpriteScale * 0.96;
         break;
       }
+      case 'GRABBING': {
+        // Giant Sumo Grappler bear-hug squeezing the captured hero!
+        const grabPose = this.resolveAnimPose(5);
+        this.setPoseTexture(grabPose.tex, grabPose.frame);
+        const squeeze = Math.sin(performance.now() * 0.022) * 0.08;
+        rot = Math.sin(performance.now() * 0.018) * 0.06;
+        sx = this.baseSpriteScale * (1.1 + squeeze);
+        sy = this.baseSpriteScale * (0.94 - squeeze * 0.6);
+        break;
+      }
       case 'HURT': {
-        if (hasVaried) this.setPoseTexture('bandits_varied', 5);
-        else this.setPoseTexture(idlePose.tex, idlePose.frame);
+        if (hasVaried && this.animSheetKey === 'bandit_anim_sheet') {
+          this.setPoseTexture('bandits_varied', 5);
+        } else {
+          this.setPoseTexture(idlePose.tex, idlePose.frame);
+        }
         rot = -this.facingDirX * 0.22;
         sx = this.baseSpriteScale * 0.94;
         sy = this.baseSpriteScale * 1.1;
@@ -1642,7 +1810,11 @@ export class Bandit {
       case 'DEFEATED': {
         if (this.elevationZ > 2) {
           // Hilarious >_< screaming flying-backward pose!
-          if (hasVaried) this.setPoseTexture('bandits_varied', 5);
+          if (hasVaried && this.animSheetKey === 'bandit_anim_sheet') {
+            this.setPoseTexture('bandits_varied', 5);
+          } else {
+            this.setPoseTexture(idlePose.tex, idlePose.frame);
+          }
           rot = this.tumbleSpinDir * (0.28 + (this.elevationZ / 130) * 0.45);
           sx = this.baseSpriteScale * 1.08;
           sy = this.baseSpriteScale * 0.94;
@@ -1717,6 +1889,7 @@ export class Bandit {
   }
 
   public destroy(): void {
+    this.releaseActiveGrab();
     this.releaseCurrentCover();
     this.container.destroy(true);
   }

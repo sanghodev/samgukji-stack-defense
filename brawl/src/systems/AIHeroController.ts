@@ -75,8 +75,8 @@ export class AIHeroController {
     mem.pickupCooldownMs = Math.max(0, mem.pickupCooldownMs - deltaMs);
     mem.guardHoldMs = Math.max(0, mem.guardHoldMs - deltaMs);
 
-    // If dizzy or knocked down: fire Skill 3 Emergency Escape Ultimate if ready (especially at low HP!), else mash out!
-    if (hero.bodyState === 'DIZZY' || hero.bodyState === 'KNOCKDOWN') {
+    // If grabbed, dizzy, or knocked down: fire Skill 3 Emergency Escape Ultimate if ready (especially at low HP!), else mash out!
+    if (hero.isGrabbed || hero.bodyState === 'DIZZY' || hero.bodyState === 'KNOCKDOWN') {
       if (hero.skill3ReadyRatio >= 1 && (hero.isLowHpEmergency || hero.bodyState === 'DIZZY')) {
         out.skill3Pressed = true;
         mem.actionCooldownMs = 600;
@@ -84,7 +84,7 @@ export class AIHeroController {
       }
       if (mem.actionCooldownMs <= 0) {
         out.lightAttackPressed = true;
-        mem.actionCooldownMs = 340;
+        mem.actionCooldownMs = hero.isGrabbed ? 220 : 340;
       }
       return out;
     }

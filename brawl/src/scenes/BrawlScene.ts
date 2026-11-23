@@ -226,8 +226,16 @@ export class BrawlScene extends Phaser.Scene {
         {
           onSpawnBandit: (arch) => this.spawnSingleBandit(arch),
           onSpawnBanditGroup: () => {
-            const pool: BanditArchetype[] = ['coward', 'clumsy', 'overconfident', 'sneaky', 'stubborn'];
-            for (let i = 0; i < 5; i++) this.spawnSingleBandit(pool[i % pool.length]);
+            const pool: BanditArchetype[] = [
+              'archer',
+              'bomber',
+              'grappler',
+              'soldier',
+              'sneaky',
+              'overconfident',
+              'clumsy',
+            ];
+            for (let i = 0; i < 7; i++) this.spawnSingleBandit(pool[i % pool.length]);
           },
           onClearEnemies: () => this.clearAllBandits(),
           onSpawnObject: (kind) => this.spawnObjectNearPrimaryHero(kind),
@@ -463,17 +471,17 @@ export class BrawlScene extends Phaser.Scene {
         const inp = heroInputs.get(hero.heroId);
         if (!inp) continue;
 
-        // Skill 3 Emergency Escape Ultimate can break DIZZY / KNOCKDOWN / surrounds!
+        // Skill 3 Emergency Escape Ultimate can break DIZZY / KNOCKDOWN / GRABS / surrounds!
         if (inp.skill3Pressed && !hero.isDefeated) {
           hero.triggerSkill3Ultimate(inp);
         }
-        if (inp.skill2Pressed && !hero.isIncapacitated) {
+        if (inp.skill2Pressed && !hero.isIncapacitated && !hero.isGrabbed) {
           hero.triggerSkill2(inp);
         }
-        if (inp.specialPressed && !hero.isIncapacitated) {
+        if (inp.specialPressed && !hero.isIncapacitated && !hero.isGrabbed) {
           hero.triggerSpecial(inp);
         }
-        if (inp.interactPressed && !hero.isIncapacitated) {
+        if (inp.interactPressed && !hero.isIncapacitated && !hero.isGrabbed) {
           this.handleHeroInteract(hero);
         }
 
@@ -2422,54 +2430,54 @@ export class BrawlScene extends Phaser.Scene {
   }
 
   private spawnInitialEnvironment(): void {
-    // Rear courtyard (aligned with backY=286 courtyard line for cohesive 2.5D perspective)
+    // Rear street-market row (aligned with backY=286 courtyard line for cohesive 2.5D perspective)
     const rearProps: Array<[EnvObjectKind, number, number]> = [
-      ['ceramic_jar', 330, 298],
-      ['barrel_empty', 435, 302],
-      ['table', 565, 308],
-      ['ceramic_jar', 695, 298],
+      ['grain_sack', 325, 298],
+      ['silk_bolts', 430, 302],
+      ['table', 560, 308],
+      ['spice_stall', 690, 298],
       ['table', 815, 308],
-      ['barrel_water', 935, 302],
-      ['fruit_basket', 475, 336],
-      ['fruit_basket', 855, 336],
+      ['fish_tub', 935, 304],
+      ['bean_sack', 485, 336],
+      ['meat_stall', 865, 338],
     ];
 
-    // Mid-courtyard (main tavern & market stalls — spacious enough for 2x tables!)
+    // Mid-courtyard (richly stocked ancient Chinese marketplace stalls & tavern tables!)
     const midProps: Array<[EnvObjectKind, number, number]> = [
-      ['barrel_water', 290, 355],
+      ['fish_tub', 285, 358],
       ['table', 405, 368],
       ['ceramic_jar', 515, 352],
-      ['table', 640, 344],
-      ['fruit_basket', 760, 355],
+      ['silk_bolts', 640, 344],
+      ['meat_stall', 760, 356],
       ['table', 875, 370],
       ['barrel_water', 985, 360],
-      ['ceramic_jar', 1065, 355],
+      ['grain_sack', 1065, 356],
 
-      ['barrel_empty', 215, 448],
-      ['fruit_basket', 315, 462],
+      ['bean_sack', 215, 448],
+      ['spice_stall', 318, 462],
       ['table', 445, 468],
-      ['ceramic_jar', 560, 442],
-      ['barrel_water', 735, 445],
+      ['grain_sack', 560, 442],
+      ['fish_tub', 735, 446],
       ['table', 855, 468],
-      ['fruit_basket', 980, 458],
-      ['barrel_empty', 1095, 448],
+      ['silk_bolts', 978, 458],
+      ['meat_stall', 1095, 450],
     ];
 
-    // Foreground plaza (large close-up interactive tavern tables, barrels & jars!)
+    // Foreground plaza (large close-up interactive merchant goods, tables, barrels & jars!)
     const frontProps: Array<[EnvObjectKind, number, number]> = [
       ['barrel_water', 165, 565],
       ['table', 295, 578],
-      ['ceramic_jar', 405, 595],
-      ['fruit_basket', 515, 652],
+      ['grain_sack', 408, 596],
+      ['bean_sack', 518, 650],
       ['table', 675, 618],
-      ['ceramic_jar', 825, 598],
+      ['silk_bolts', 825, 598],
       ['table', 965, 578],
-      ['barrel_water', 1095, 565],
+      ['fish_tub', 1095, 566],
 
-      ['barrel_empty', 225, 650],
-      ['ceramic_jar', 365, 655],
+      ['meat_stall', 228, 650],
+      ['spice_stall', 368, 654],
       ['fruit_basket', 795, 652],
-      ['barrel_empty', 1015, 648],
+      ['ceramic_jar', 1018, 648],
     ];
 
     for (const [kind, x, y] of [...rearProps, ...midProps, ...frontProps]) {
@@ -2531,27 +2539,51 @@ export class BrawlScene extends Phaser.Scene {
       this.debris.spawn('DUST_CLOUD', obj.x, obj.y, dirX, dirY);
       this.vfx.spawnFlyingBowls(obj.x, obj.y, dirX, dirY);
       this.screenShake.trigger(6.0, 120, dirX, dirY);
-    } else if (obj.spec.rollable) {
-      this.audio.playBarrelBreak(obj.spec.containsWater);
+    } else if (obj.spec.containsWater) {
+      this.audio.playBarrelBreak(true);
       this.debris.spawn('WOOD_SPLINTERS', obj.x, obj.y, dirX, dirY);
-      if (obj.spec.containsWater) {
-        this.debris.spawn('WATER_SPLASH', obj.x, obj.y);
-        this.spawnHazard('water_puddle', obj.x, obj.y);
-      } else {
-        this.debris.spawn('DUST_CLOUD', obj.x, obj.y);
-      }
-      this.screenShake.trigger(4.8, 100, dirX, dirY);
+      this.debris.spawn('WATER_SPLASH', obj.x, obj.y);
+      this.spawnHazard('water_puddle', obj.x, obj.y);
+      this.screenShake.trigger(4.6, 100, dirX, dirY);
+    } else if (obj.spec.rollable) {
+      this.audio.playBarrelBreak(false);
+      this.debris.spawn('WOOD_SPLINTERS', obj.x, obj.y, dirX, dirY);
+      this.debris.spawn('DUST_CLOUD', obj.x, obj.y);
+      this.screenShake.trigger(4.4, 95, dirX, dirY);
     } else if (obj.spec.material === 'ceramic') {
       this.audio.playCeramicBreak();
       this.debris.spawn('CERAMIC_SHARDS', obj.x, obj.y, dirX, dirY);
       this.debris.spawn('DUST_CLOUD', obj.x, obj.y);
       this.screenShake.trigger(2.8, 70, dirX, dirY);
+    } else if (obj.spec.material === 'sack') {
+      // Rice / flour / soybean sacks burst in a big dusty cloud + scattered beans!
+      this.audio.playFallThud();
+      this.debris.spawn('DUST_CLOUD', obj.x, obj.y, dirX, dirY);
+      this.debris.spawn('LANDING_DUST', obj.x, obj.y);
+      if (obj.spec.spillsFood) {
+        this.debris.spawn('FRUIT_SCATTER', obj.x, obj.y, dirX, dirY);
+        this.spawnHazard('spilled_food', obj.x, obj.y);
+      }
+      this.screenShake.trigger(3.2, 80, dirX, dirY);
+    } else if (obj.spec.material === 'cloth') {
+      // Silk bolts unroll and burst wooden merchant stand!
+      this.audio.playTableImpact();
+      this.debris.spawn('WOOD_SPLINTERS', obj.x, obj.y, dirX, dirY);
+      this.debris.spawn('DUST_CLOUD', obj.x, obj.y, dirX, dirY);
+      this.screenShake.trigger(3.2, 80, dirX, dirY);
     } else if (obj.spec.spillsFood) {
       this.audio.playTableImpact();
       this.debris.spawn('FRUIT_SCATTER', obj.x, obj.y, dirX, dirY);
       this.debris.spawn('WOOD_SPLINTERS', obj.x, obj.y, dirX, dirY);
       this.spawnHazard('spilled_food', obj.x, obj.y);
-      this.spawnHazard('banana_peel', obj.x + (dirX || 1) * 34, obj.y + (dirY || 0.2) * 20);
+      if (obj.spec.kind === 'fruit_basket') {
+        this.spawnHazard('banana_peel', obj.x + (dirX || 1) * 34, obj.y + (dirY || 0.2) * 20);
+      }
+      this.screenShake.trigger(3.2, 75, dirX, dirY);
+    } else {
+      this.audio.playTableImpact();
+      this.debris.spawn('WOOD_SPLINTERS', obj.x, obj.y, dirX, dirY);
+      this.debris.spawn('DUST_CLOUD', obj.x, obj.y);
       this.screenShake.trigger(3.0, 75, dirX, dirY);
     }
   }
@@ -2561,11 +2593,12 @@ export class BrawlScene extends Phaser.Scene {
     dirX: number,
     dirY: number,
   ): void {
-    if (!this.textures.exists('broken_wreckage')) return;
     const pieces = getWreckageFramesForKind(obj.spec.kind);
     const baseAngle = Math.hypot(dirX, dirY) > 0.1 ? Math.atan2(dirY, dirX) : Math.random() * Math.PI * 2;
 
     pieces.forEach((p, idx) => {
+      const texKey = p.textureKey ?? 'broken_wreckage';
+      if (!this.textures.exists(texKey)) return;
       const spread = (idx - (pieces.length - 1) / 2) * 0.95 + (Math.random() - 0.5) * 0.55;
       const ang = baseAngle + spread;
       const speed = 135 + Math.random() * 145;
@@ -2582,6 +2615,7 @@ export class BrawlScene extends Phaser.Scene {
         vy,
         vz,
         p.scale,
+        texKey,
       );
       this.wreckages.push(piece);
     });
@@ -2644,20 +2678,20 @@ export class BrawlScene extends Phaser.Scene {
 
   private spawnBalancedBanditSquad(count: number, hpMul: number): void {
     const roster: Array<{ arch: BanditArchetype; x: number; y: number }> = [
-      { arch: 'coward', x: 470, y: 312 },
-      { arch: 'clumsy', x: 560, y: 396 },
-      { arch: 'overconfident', x: 390, y: 468 },
-      { arch: 'stubborn', x: 892, y: 476 },
-      { arch: 'coward', x: 810, y: 318 },
+      { arch: 'archer', x: 440, y: 318 },
+      { arch: 'bomber', x: 840, y: 326 },
+      { arch: 'grappler', x: 540, y: 468 },
+      { arch: 'soldier', x: 880, y: 472 },
+      { arch: 'overconfident', x: 380, y: 458 },
       { arch: 'sneaky', x: 486, y: 548 },
       { arch: 'elite', x: 720, y: 334 },
       { arch: 'clumsy', x: 724, y: 404 },
-      { arch: 'overconfident', x: 355, y: 598 },
-      { arch: 'sneaky', x: 792, y: 554 },
-      { arch: 'stubborn', x: 930, y: 596 },
-      { arch: 'stubborn', x: 565, y: 626 },
+      { arch: 'archer', x: 355, y: 598 },
+      { arch: 'bomber', x: 792, y: 554 },
+      { arch: 'soldier', x: 930, y: 596 },
+      { arch: 'grappler', x: 565, y: 616 },
       { arch: 'coward', x: 410, y: 330 },
-      { arch: 'clumsy', x: 860, y: 345 },
+      { arch: 'stubborn', x: 860, y: 345 },
       { arch: 'elite', x: 640, y: 295 },
     ];
 
@@ -2681,7 +2715,17 @@ export class BrawlScene extends Phaser.Scene {
       ? Phaser.Math.Between(Math.round(bounds.left + 70), Math.round(bounds.left + 220))
       : Phaser.Math.Between(Math.round(bounds.right - 220), Math.round(bounds.right - 70));
 
-    const pool: BanditArchetype[] = ['coward', 'clumsy', 'overconfident', 'sneaky', 'stubborn'];
+    const pool: BanditArchetype[] = [
+      'archer',
+      'bomber',
+      'grappler',
+      'soldier',
+      'overconfident',
+      'sneaky',
+      'stubborn',
+      'clumsy',
+      'coward',
+    ];
     const arch = archetype ?? pool[this.nextBanditSeq % pool.length];
     this.spawnBanditAt(x, y, this.bandits.length, arch);
   }
@@ -2719,7 +2763,7 @@ export class BrawlScene extends Phaser.Scene {
         onHitPlayer: (damage, dirX, dirY) => {
           const victim = this.findNearestAliveHero(bandit.x, bandit.y);
           if (!victim) return;
-          if (bandit.archetype === 'elite') {
+          if (bandit.archetype === 'elite' || bandit.archetype === 'grappler') {
             victim.takeDamage(damage, dirX, dirY, {
               heavy: true,
               causesDizzy: Math.random() < 0.32,
@@ -2740,8 +2784,13 @@ export class BrawlScene extends Phaser.Scene {
           } else if (skill === 'DASH_CLEAVE') {
             this.audio.playChargeRush();
             this.debris.spawn('DUST_CLOUD', b.x, b.y);
-          } else if (skill === 'DAGGER_THROW') {
+          } else if (skill === 'DAGGER_THROW' || skill === 'ARROW_SHOT') {
             this.audio.playBowRelease();
+          } else if (skill === 'BOMB_THROW') {
+            this.audio.playHeavyTableThrow();
+          } else if (skill === 'BEAR_HUG') {
+            this.audio.playChargeRush();
+            this.debris.spawn('DUST_CLOUD', b.x, b.y);
           }
         },
         onSkillHitArea: (b, skill, radius, damage, causesDizzy) => {
@@ -2794,6 +2843,69 @@ export class BrawlScene extends Phaser.Scene {
           });
           this.projectiles.push(dagger);
         },
+        onShootArrow: (b, dx, dy, damage) => {
+          const arrow = new Projectile(this, {
+            id: `earrow_${this.nextProjectileSeq++}`,
+            ownerHeroId: b.id,
+            isEnemyProjectile: true,
+            x: b.x + dx * 24,
+            y: b.y + dy * 14,
+            dirX: dx,
+            dirY: dy,
+            speed: 525,
+            damage,
+            knockbackForce: 180,
+            launchVz: 0,
+            penetrating: false,
+            maxRange: 520,
+            radius: 13,
+            tint: 0xfb923c,
+            textureKey: 'enemy_arrow',
+          });
+          this.projectiles.push(arrow);
+        },
+        onThrowBomb: (b, targetX, targetY, damage) => {
+          this.spawnEnemyBomb(b.x, b.y, targetX, targetY, damage);
+        },
+        onTryGrabHero: (b) => {
+          let best: Warrior | null = null;
+          let bestDist = 74;
+          for (const h of this.heroes) {
+            if (h.isDefeated || h.isGrabbed) continue;
+            const d = Math.hypot(h.x - b.x, (h.y - b.y) / PERSPECTIVE_CONFIG.verticalMoveRatio);
+            if (d <= bestDist) {
+              bestDist = d;
+              best = h;
+            }
+          }
+          if (!best) return null;
+          if (best.beginGrabbed(b.id)) {
+            const dir = best.x >= b.x ? 1 : -1;
+            const anchor = clampToArena(b.x + dir * 20, b.y + 3, best.collisionRadius);
+            best.x = anchor.x;
+            best.y = anchor.y;
+            this.audio.playHeavyEnvImpact();
+            this.screenShake.trigger(3.4, 90, dir, 0);
+            return best.heroId;
+          }
+          return null;
+        },
+        onGrabSqueezeHero: (b, heroId, damage) => {
+          const h = this.heroes.find((w) => w.heroId === heroId);
+          if (!h || h.isDefeated || h.grabbedById !== b.id) return false;
+          const dir = h.x >= b.x ? 1 : -1;
+          const stillHeld = h.applyGrabSqueeze(damage, b.x + dir * 18, b.y + 3);
+          if (stillHeld) {
+            this.screenShake.trigger(2.4, 70, dir, 0);
+          }
+          return stillHeld;
+        },
+        onReleaseGrabHero: (b, heroId) => {
+          const h = this.heroes.find((w) => w.heroId === heroId);
+          if (h && h.grabbedById === b.id) {
+            h.releaseGrab();
+          }
+        },
         onLanded: (b, impactSpeed) => {
           const strong = impactSpeed > 150;
           this.audio.playKnockdownLanding();
@@ -2835,6 +2947,143 @@ export class BrawlScene extends Phaser.Scene {
     );
 
     this.bandits.push(bandit);
+  }
+
+  /**
+   * Launches an arcing 2.5D black iron bomb thrown by Bomber enemies!
+   * Displays a pulsing floor danger ring and explodes on impact — damaging heroes
+   * (respecting Guard), smashing nearby market goods, and comically launching nearby bandits!
+   */
+  private spawnEnemyBomb(
+    startX: number,
+    startY: number,
+    rawTargetX: number,
+    rawTargetY: number,
+    damage: number,
+  ): void {
+    const target = clampToArena(rawTargetX, rawTargetY, 34);
+    const tx = target.x;
+    const ty = target.y;
+    const blastRadius = 96;
+    const durationMs = 780;
+
+    // Pulsing floor target danger ring
+    const ring = this.add.graphics();
+    ring.setDepth(Math.max(4, getDepthOrder(ty) - 5));
+
+    // Arcing black iron bomb with sizzling golden fuse spark
+    const bomb = this.add.graphics();
+    bomb.setDepth(getDepthOrder(Math.max(startY, ty)) + 25);
+
+    const state = { t: 0 };
+    this.tweens.add({
+      targets: state,
+      t: 1,
+      duration: durationMs,
+      ease: 'Linear',
+      onUpdate: () => {
+        if (!this.scene || !this.scene.isActive()) return;
+        const p = state.t;
+        const bx = Phaser.Math.Linear(startX, tx, p);
+        const by = Phaser.Math.Linear(startY, ty, p);
+        const arcZ = Math.sin(p * Math.PI) * 135;
+        const sc = getPerspectiveScale(by);
+
+        ring.clear();
+        const pulse = 0.55 + Math.sin(p * 26) * 0.35;
+        ring.fillStyle(0xf97316, 0.16 + p * 0.2);
+        ring.fillEllipse(tx, ty, blastRadius * 1.9, blastRadius * 1.06);
+        ring.lineStyle(3, 0xef4444, 0.9 * pulse);
+        ring.strokeEllipse(tx, ty, blastRadius * 1.9, blastRadius * 1.06);
+
+        bomb.clear();
+        bomb.setPosition(bx, by - 16 - arcZ);
+        bomb.setScale(sc);
+        bomb.setDepth(getDepthOrder(by) + 25);
+        // Iron sphere + metallic highlight + glowing spark
+        bomb.fillStyle(0x1f2937, 1);
+        bomb.fillCircle(0, 0, 12);
+        bomb.lineStyle(2.5, 0x090d16, 1);
+        bomb.strokeCircle(0, 0, 12);
+        bomb.fillStyle(0x64748b, 0.9);
+        bomb.fillCircle(-4, -4, 3.5);
+        // Sizzling spark
+        const sparkR = 4.5 + Math.sin(p * 44) * 2;
+        bomb.fillStyle(0xf97316, 1);
+        bomb.fillCircle(7, -11, sparkR + 1.5);
+        bomb.fillStyle(0xfef08a, 1);
+        bomb.fillCircle(7, -11, sparkR * 0.65);
+      },
+      onComplete: () => {
+        ring.destroy();
+        bomb.destroy();
+        if (!this.scene || !this.scene.isActive()) return;
+
+        // Fiery 16-bit explosion!
+        this.vfx.spawnInfernoFirePillars(tx, ty, blastRadius, false);
+        this.vfx.spawnEnemySkillBurst(tx, ty, blastRadius, 0xf97316, false);
+        this.debris.spawn('DUST_CLOUD', tx, ty);
+        this.audio.playBossHeavySlam();
+        this.screenShake.trigger(7.5, 190, 0, 1);
+        this.kickNearbyWreckage(tx, ty, blastRadius * 1.4, 360, 0, 0, 265);
+        this.broadcastFearWave(tx, ty, 240, 26);
+
+        // Damage heroes inside blast (respects Guard!)
+        for (const h of this.heroes) {
+          if (h.isDefeated) continue;
+          const dx = h.x - tx;
+          const dy = (h.y - ty) / PERSPECTIVE_CONFIG.verticalMoveRatio;
+          const d = Math.hypot(dx, dy);
+          if (d <= blastRadius + h.collisionRadius) {
+            const nx = d > 0.1 ? dx / d : 1;
+            const ny = d > 0.1 ? dy / d : 0;
+            h.takeDamage(damage, nx, ny, {
+              heavy: true,
+              causesDizzy: true,
+              knockdownForce: 310,
+              launchVz: 255,
+              dizzyDurationMs: 1450,
+            });
+          }
+        }
+
+        // Comically launch nearby bandits caught in friendly fire!
+        for (const b of this.bandits) {
+          if (!b.isVulnerable) continue;
+          const dx = b.x - tx;
+          const dy = (b.y - ty) / PERSPECTIVE_CONFIG.verticalMoveRatio;
+          const d = Math.hypot(dx, dy);
+          if (d <= blastRadius * 0.92) {
+            const nx = d > 0.1 ? dx / d : 1;
+            const ny = d > 0.1 ? dy / d : 0;
+            b.takeHit(
+              {
+                damage: 16,
+                dirX: nx,
+                dirY: ny,
+                knockbackForce: 330,
+                launchVz: 265,
+                isHeavy: true,
+              },
+              this.coordinator,
+            );
+          }
+        }
+
+        // Smash nearby market goods!
+        for (const obj of this.envObjects) {
+          if (obj.isBroken || obj.state === 'CARRIED') continue;
+          const dx = obj.x - tx;
+          const dy = (obj.y - ty) / PERSPECTIVE_CONFIG.verticalMoveRatio;
+          const d = Math.hypot(dx, dy);
+          if (d <= blastRadius + obj.radius) {
+            const nx = d > 0.1 ? dx / d : 1;
+            const ny = d > 0.1 ? dy / d : 0;
+            obj.applyStrike(nx, ny, 340, 2, true);
+          }
+        }
+      },
+    });
   }
 
   // ==================== HELPERS & DEBUG TOOLS ====================

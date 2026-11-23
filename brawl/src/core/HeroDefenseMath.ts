@@ -122,11 +122,19 @@ export function getPowerUpVisualTier(treasureCount: number): 0 | 1 | 2 | 3 {
 /**
  * Returns the 16-bit broken_wreckage frame indices to spawn for a destroyed prop kind.
  */
-export type EnemySkillKind = 'NONE' | 'WHIRLWIND' | 'GROUND_SLAM' | 'DASH_CLEAVE' | 'DAGGER_THROW';
+export type EnemySkillKind =
+  | 'NONE'
+  | 'WHIRLWIND'
+  | 'GROUND_SLAM'
+  | 'DASH_CLEAVE'
+  | 'DAGGER_THROW'
+  | 'ARROW_SHOT'
+  | 'BOMB_THROW'
+  | 'BEAR_HUG';
 
 /**
- * Selects a signature enemy combat skill for higher-tier bandit archetypes
- * based on target distance so Elites, Veterans, Assassins, and Captains feel threatening & distinct!
+ * Selects a signature enemy combat skill for higher-tier & specialist enemy archetypes
+ * (Elite, Regular Soldier, Assassin, Archer, Bomber, Giant Grappler, Axe Raider).
  */
 export function pickEnemySkillForArchetype(
   archetype: string,
@@ -140,10 +148,20 @@ export function pickEnemySkillForArchetype(
       }
       return 'GROUND_SLAM';
     case 'stubborn':
+    case 'soldier':
       if (distToHero >= 70 && distToHero <= 230) return 'DASH_CLEAVE';
       return 'NONE';
     case 'sneaky':
       if (distToHero >= 115 && distToHero <= 340) return 'DAGGER_THROW';
+      return 'NONE';
+    case 'archer':
+      if (distToHero >= 110 && distToHero <= 430) return 'ARROW_SHOT';
+      return 'NONE';
+    case 'bomber':
+      if (distToHero >= 105 && distToHero <= 370) return 'BOMB_THROW';
+      return 'NONE';
+    case 'grappler':
+      if (distToHero <= 155) return 'BEAR_HUG';
       return 'NONE';
     case 'overconfident':
       if (distToHero <= 135 && rng() < 0.45) return 'GROUND_SLAM';
@@ -156,7 +174,7 @@ export function pickEnemySkillForArchetype(
 export function getWreckageFramesForKind(
   kind: EnvObjectKind,
   rng = Math.random,
-): Array<{ frame: number; scale: number }> {
+): Array<{ frame: number; scale: number; textureKey?: string }> {
   switch (kind) {
     case 'table':
       return [
@@ -175,6 +193,22 @@ export function getWreckageFramesForKind(
     case 'fruit_basket':
       return [
         { frame: rng() < 0.5 ? 5 : 6, scale: 0.66 }, // Overturned apple basket OR dumpling steamer!
+      ];
+    case 'silk_bolts':
+    case 'grain_sack':
+    case 'bean_sack':
+      return [
+        { frame: 6, scale: 0.82, textureKey: 'market_goods' }, // Burst sack, beans, flour & torn crimson silk!
+      ];
+    case 'fish_tub':
+    case 'meat_stall':
+      return [
+        { frame: 7, scale: 0.84, textureKey: 'market_goods' }, // Floppy fish, shattered planks & cartoon meat bone!
+      ];
+    case 'spice_stall':
+      return [
+        { frame: 6, scale: 0.78, textureKey: 'market_goods' },
+        { frame: 1, scale: 0.62 },
       ];
   }
 }

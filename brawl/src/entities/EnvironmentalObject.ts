@@ -117,16 +117,32 @@ export class EnvironmentalObject {
 
     this.bodyGfx = scene.add.graphics();
     if (scene.textures.exists('mayhem_props')) {
-      const frameMap: Record<EnvObjectKind, { frame: number; scale: number; yOff: number }> = {
-        table: { frame: 0, scale: 1.04, yOff: 8 },
-        barrel_water: { frame: 1, scale: 0.72, yOff: 6 },
-        barrel_empty: { frame: 2, scale: 0.72, yOff: 6 },
-        ceramic_jar: { frame: 3, scale: 0.68, yOff: 6 },
-        fruit_basket: { frame: Math.random() < 0.5 ? 4 : 5, scale: 0.66, yOff: 6 },
+      const frameMap: Record<
+        EnvObjectKind,
+        { tex: string; frame: number; scale: number; yOff: number }
+      > = {
+        table: { tex: 'mayhem_props', frame: 0, scale: 1.04, yOff: 8 },
+        barrel_water: { tex: 'mayhem_props', frame: 1, scale: 0.72, yOff: 6 },
+        barrel_empty: { tex: 'mayhem_props', frame: 2, scale: 0.72, yOff: 6 },
+        ceramic_jar: { tex: 'mayhem_props', frame: 3, scale: 0.68, yOff: 6 },
+        fruit_basket: {
+          tex: 'mayhem_props',
+          frame: Math.random() < 0.5 ? 4 : 5,
+          scale: 0.66,
+          yOff: 6,
+        },
+        silk_bolts: { tex: 'market_goods', frame: 0, scale: 0.84, yOff: 6 },
+        fish_tub: { tex: 'market_goods', frame: 1, scale: 0.80, yOff: 6 },
+        meat_stall: { tex: 'market_goods', frame: 2, scale: 0.86, yOff: 6 },
+        grain_sack: { tex: 'market_goods', frame: 3, scale: 0.80, yOff: 6 },
+        bean_sack: { tex: 'market_goods', frame: 4, scale: 0.78, yOff: 6 },
+        spice_stall: { tex: 'market_goods', frame: 5, scale: 0.82, yOff: 6 },
       };
       const cfg = frameMap[kind];
+      const texKey = scene.textures.exists(cfg.tex) ? cfg.tex : 'mayhem_props';
+      const frameIdx = texKey === cfg.tex ? cfg.frame : 2;
       this.bodySprite = scene.add
-        .image(0, cfg.yOff, 'mayhem_props', cfg.frame)
+        .image(0, cfg.yOff, texKey, frameIdx)
         .setOrigin(0.5, 0.92)
         .setScale(cfg.scale);
       this.bodyGfx.setVisible(false);
@@ -179,7 +195,10 @@ export class EnvironmentalObject {
       this.state === 'IDLE' &&
       (this.spec.kind === 'table' ||
         this.spec.kind === 'barrel_water' ||
-        this.spec.kind === 'barrel_empty')
+        this.spec.kind === 'barrel_empty' ||
+        this.spec.kind === 'silk_bolts' ||
+        this.spec.kind === 'fish_tub' ||
+        this.spec.kind === 'meat_stall')
     );
   }
 

@@ -51,6 +51,10 @@ export class BootScene extends Phaser.Scene {
       frameWidth: 160,
       frameHeight: 160,
     });
+    this.load.spritesheet('diverse_enemies_anim', '../assets/sprites/diverse_enemies_anim.png', {
+      frameWidth: 160,
+      frameHeight: 160,
+    });
     this.load.spritesheet('enemies_4types', '../assets/sprites/enemies_4types.png', {
       frameWidth: 160,
       frameHeight: 160,
@@ -60,8 +64,12 @@ export class BootScene extends Phaser.Scene {
       frameHeight: 192,
     });
 
-    // 16-bit Interactive Marketplace Props, Persistent Wreckage & Comic Combat VFX sheets
+    // 16-bit Interactive Marketplace Props, Street Merchant Goods, Persistent Wreckage & Comic Combat VFX sheets
     this.load.spritesheet('mayhem_props', '../assets/sprites/mayhem_props.png', {
+      frameWidth: 128,
+      frameHeight: 128,
+    });
+    this.load.spritesheet('market_goods', '../assets/sprites/market_goods.png', {
       frameWidth: 128,
       frameHeight: 128,
     });
