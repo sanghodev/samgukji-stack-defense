@@ -159,10 +159,10 @@ export class CombatHud implements IGameSystem {
       .setVisible(false);
 
     // 4. Bottom-right controls legend
-    const hintW = 736;
+    const hintW = 810;
     const hintX = GAME_WIDTH - hintW - 12;
     const hintBg = scene.add.graphics().setDepth(DEPTH_LAYERS.HUD);
-    hintBg.fillStyle(0x0b101b, 0.82);
+    hintBg.fillStyle(0x0b101b, 0.84);
     hintBg.fillRoundedRect(hintX, GAME_HEIGHT - 32, hintW, 24, 5);
     hintBg.lineStyle(1, 0x94a3b8, 0.35);
     hintBg.strokeRoundedRect(hintX, GAME_HEIGHT - 32, hintW, 24, 5);
@@ -171,7 +171,7 @@ export class CombatHud implements IGameSystem {
       .text(
         hintX + hintW / 2,
         GAME_HEIGHT - 20,
-        'WASD: 이동 · Z: 콤보 · X: 강공격 · V: 필살기 · SPACE: 잡기/던지기 · TAB: 영웅교대 · P: 파티(1~4인) · 패드 Start: 난입 · F2: 디버그',
+        'WASD: 이동 · Z: 콤보 · X: 강공격 · C/Shift: 방어 · V: 필살기 · SPACE: 잡기/던지기 · TAB: 교대 · P: 파티(1~4인) · F2: 디버그',
         {
           fontFamily: 'Malgun Gothic, Apple SD Gothic Neo, sans-serif',
           fontSize: '10.5px',

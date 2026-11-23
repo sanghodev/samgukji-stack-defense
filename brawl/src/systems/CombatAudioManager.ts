@@ -62,7 +62,11 @@ type SoundChannel =
   | 'upgrade_confirm'
   | 'combo_milestone'
   | 'victory_fanfare'
-  | 'defeat_sting';
+  | 'defeat_sting'
+  | 'guard_block'
+  | 'hero_dizzy'
+  | 'power_up_burst'
+  | 'wreckage_kick';
 
 /**
  * Procedural Web Audio API combat & environmental chaos sound engine.
@@ -843,6 +847,49 @@ export class CombatAudioManager implements IAudioSystem {
     notes.forEach((f, i) => {
       this.playTone(dest, now + i * 0.16, 'sawtooth', f, f * 0.96, 0.22, 0.24);
     });
+  }
+
+  public playGuardBlock(): void {
+    const dest = this.beginPlay('guard_block', 55, 'combat');
+    if (!dest) return;
+    const now = this.ctx!.currentTime;
+    const p = this.vary(1.0, 0.08);
+    // Crisp metallic shield clang + spark chime!
+    this.playTone(dest, now, 'triangle', 1240 * p, 680 * p, 0.14, 0.38);
+    this.playTone(dest, now + 0.01, 'sine', 1860 * p, 1120 * p, 0.11, 0.24);
+    this.playFilteredNoise(dest, now, 0.06, 4200 * p, 1400 * p, 2.2, 0.42);
+  }
+
+  public playHeroDizzy(): void {
+    const dest = this.beginPlay('hero_dizzy', 280, 'combat');
+    if (!dest) return;
+    const now = this.ctx!.currentTime;
+    const p = this.vary(1.0, 0.08);
+    // Comedic spinning-stars cartoon dizzy warble!
+    this.playTone(dest, now, 'sine', 540 * p, 820 * p, 0.11, 0.24);
+    this.playTone(dest, now + 0.1, 'sine', 820 * p, 460 * p, 0.11, 0.22);
+    this.playTone(dest, now + 0.2, 'triangle', 460 * p, 740 * p, 0.12, 0.2);
+  }
+
+  public playPowerUpBurst(): void {
+    const dest = this.beginPlay('power_up_burst', 180, 'combat');
+    if (!dest) return;
+    const now = this.ctx!.currentTime;
+    // Heroic rising elemental power-up arpeggio + ki whoosh!
+    const notes = [440, 554.37, 659.25, 880, 1174.66];
+    notes.forEach((f, i) => {
+      this.playTone(dest, now + i * 0.045, 'triangle', f, f * 1.03, 0.18, 0.3);
+    });
+    this.playFilteredNoise(dest, now, 0.22, 900, 3200, 1.4, 0.28);
+  }
+
+  public playWreckageKick(): void {
+    const dest = this.beginPlay('wreckage_kick', 95, 'env');
+    if (!dest) return;
+    const now = this.ctx!.currentTime;
+    const p = this.vary(1.0, 0.14);
+    this.playTone(dest, now, 'triangle', 260 * p, 115 * p, 0.075, 0.24);
+    this.playFilteredNoise(dest, now, 0.055, 1900 * p, 620 * p, 1.8, 0.22);
   }
 
   // ==================== INTERNAL AUDIO ENGINE ====================

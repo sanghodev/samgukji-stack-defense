@@ -229,21 +229,22 @@ export class EnvironmentalObject {
     this.vx = 0;
     this.vy = 0;
     this.vz = 0;
-    this.elevationZ = 44;
+    this.elevationZ = this.spec.kind === 'table' ? 86 : 82;
     this.spinAngle = 0;
     this.spinSpeed = 0;
     this.promptBadge.setVisible(false);
     return true;
   }
 
-  public syncToCarrier(carrierX: number, carrierY: number): void {
+  public syncToCarrier(carrierX: number, carrierY: number, bobOffset = 0): void {
     if (this.state !== 'CARRIED') return;
     this.prevX = this.x;
     this.prevY = this.y;
     this.x = carrierX;
     this.y = carrierY;
-    this.elevationZ = 46;
-    this.syncVisuals(getDepthOrder(carrierY) + 3);
+    const baseLift = this.spec.kind === 'table' ? 86 : 82;
+    this.elevationZ = baseLift + bobOffset;
+    this.syncVisuals(getDepthOrder(carrierY) + 6);
   }
 
   public throwInDirection(dirX: number, dirY: number, throwForce: number): void {
@@ -263,7 +264,7 @@ export class EnvironmentalObject {
     this.vx = nx * speed;
     this.vy = ny * speed * PERSPECTIVE_CONFIG.verticalMoveRatio;
     this.vz = 155;
-    this.elevationZ = 38;
+    this.elevationZ = 68;
     this.spinSpeed = (nx >= 0 ? 1 : -1) * (this.spec.kind === 'table' ? 5.5 : 8.5);
     this.lastImpactDirX = nx;
     this.lastImpactDirY = ny;

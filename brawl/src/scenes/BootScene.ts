@@ -56,11 +56,20 @@ export class BootScene extends Phaser.Scene {
       frameHeight: 192,
     });
 
-    // 16-bit Interactive Marketplace Props & Comic Combat VFX sheets
+    // 16-bit Interactive Marketplace Props, Persistent Wreckage & Comic Combat VFX sheets
     this.load.spritesheet('mayhem_props', '../assets/sprites/mayhem_props.png', {
       frameWidth: 128,
       frameHeight: 128,
     });
+    this.load.spritesheet('broken_wreckage', '../assets/sprites/broken_wreckage.png', {
+      frameWidth: 128,
+      frameHeight: 128,
+    });
+    this.load.spritesheet('hero_special_poses', '../assets/sprites/hero_special_poses.png', {
+      frameWidth: 160,
+      frameHeight: 160,
+    });
+    this.load.image('guard_shield_vfx', '../assets/sprites/guard_shield_vfx.png');
     this.load.spritesheet('combat_vfx', '../assets/sprites/combat_vfx.png', {
       frameWidth: 160,
       frameHeight: 160,

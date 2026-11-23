@@ -15,7 +15,19 @@ import {
   createBaseHeroModifiers,
   TREASURE_BY_ID,
 } from '../config/treasureConfig';
-import { CombatHitTracker, MeleeHitboxQuery } from '../core/CombatMath';
+import {
+  AirborneBodyState,
+  CombatHitTracker,
+  MeleeHitboxQuery,
+  stepAirbornePhysics,
+} from '../core/CombatMath';
+import {
+  getHeroSpecialPoseFrames,
+  getPowerUpVisualTier,
+  HeroBodyState,
+  HeroHitOptions,
+  resolveHeroIncomingHit,
+} from '../core/HeroDefenseMath';
 import {
   clampToArena,
   getDepthOrder,
@@ -108,6 +120,10 @@ export interface WarriorCombatCallbacks {
   onSpecialCooldownRejected: (hero: Warrior) => void;
   onHeroHurt: (hero: Warrior, damage: number) => void;
   onHeroDefeated: (hero: Warrior) => void;
+  onHeroGuardBlock?: (hero: Warrior, blockedDamage: number) => void;
+  onHeroLanded?: (hero: Warrior, strong: boolean) => void;
+  onHeroDizzy?: (hero: Warrior) => void;
+  onHeroPowerUp?: (hero: Warrior, treasureCount: number, treasureNameKr: string) => void;
 }
 
 /**
@@ -131,12 +147,18 @@ export class Warrior {
   public prevY: number;
   public vx = 0;
   public vy = 0;
+  public elevationZ = 0;
+  public vz = 0;
   public facingAngle = Math.PI / 2;
   public facingLabel: FacingDirection = 'S';
 
   public maxHp: number;
   public hp: number;
   public isDefeated = false;
+
+  // Hero defensive / knockdown / dizzy state
+  public bodyState: HeroBodyState = 'NORMAL';
+  public dizzyTimerMs = 0;
 
   // Combat state
   public attackPhase: AttackPhase = 'NONE';
@@ -177,9 +199,13 @@ export class Warrior {
   private readonly step5: Step5Tuning;
   private readonly callbacks: WarriorCombatCallbacks;
   private readonly groundRing: Phaser.GameObjects.Graphics;
+  private readonly powerAuraGfx: Phaser.GameObjects.Graphics;
   private readonly shadow: Phaser.GameObjects.Ellipse;
   private readonly sprite: Phaser.GameObjects.Sprite;
+  private readonly guardShieldSprite?: Phaser.GameObjects.Image;
+  private readonly dizzyGfx: Phaser.GameObjects.Graphics;
   private readonly tagText: Phaser.GameObjects.Text;
+  private readonly statusText: Phaser.GameObjects.Text;
 
   private readonly zhaoYunDirScale = 0.78;
   private readonly zhaoYunRunScale = 0.68;
@@ -198,6 +224,20 @@ export class Warrior {
   private hurtFlashTimerMs = 0;
   private knockbackVx = 0;
   private knockbackVy = 0;
+
+  // Guard, Knockdown, Dizzy, Carrying, & Power-Up VFX timers
+  private bodyStateTimerMs = 0;
+  private pendingDizzyMs = 0;
+  private guardBlockFlashMs = 0;
+  private consecutiveHitsTaken = 0;
+  private consecutiveHitResetMs = 0;
+  private statusShoutTimerMs = 0;
+  private powerAuraPhase = 0;
+  private powerUpPulseMs = 0;
+  private kiSparkCooldownMs = 0;
+  private afterimageCooldownMs = 0;
+  private carryBobOffset = 0;
+  private dizzyPhase = 0;
 
   private runFrameFloat = 0;
   private walkBobPhase = 0;
@@ -241,22 +281,30 @@ export class Warrior {
     this.groundRing.lineStyle(2.5, prof.accentHex, 0.72);
     this.groundRing.strokeEllipse(0, 2, 58, 22);
 
+    // Dynamic treasure/skill power-up aura layer (elemental rings & star pips!)
+    this.powerAuraGfx = scene.add.graphics();
+
     this.shadow = scene.add.ellipse(0, 2, 52, 17, 0x1a120b, 0.42);
 
-    const initTex =
-      heroId === 'zhaoyun'
-        ? 'zhaoyun_8dir'
-        : heroId === 'guanyu'
-          ? 'guanyu_sheet'
-          : heroId === 'zhangfei'
-            ? 'zhangfei_sheet'
-            : 'huangzhong_sheet';
-
+    const initTex = this.baseSheetKey;
     this.sprite = scene.add.sprite(0, 6, initTex, heroId === 'zhaoyun' ? 2 : 0);
     this.sprite.setOrigin(0.5, 0.92);
     this.sprite.setScale(
       heroId === 'zhaoyun' ? this.zhaoYunDirScale : this.customSheetScale,
     );
+
+    // 16-bit glowing translucent Guard Shield Dome (shown while guarding!)
+    if (scene.textures.exists('guard_shield_vfx')) {
+      this.guardShieldSprite = scene.add
+        .image(0, -44, 'guard_shield_vfx')
+        .setOrigin(0.5)
+        .setScale(0.68)
+        .setAlpha(0.86)
+        .setVisible(false);
+    }
+
+    // Orbiting cartoon stars & spiral halo during Dizzy (어질어질!) / Knockdown
+    this.dizzyGfx = scene.add.graphics();
 
     // Compact non-obstructive P1/P2/P3/P4 or AI marker high above head
     this.tagText = scene.add
@@ -270,15 +318,44 @@ export class Warrior {
       })
       .setOrigin(0.5);
 
-    this.container = scene.add.container(this.x, this.y, [
+    // Expressive Korean status shout (방어!, 어질어질!, ✨ 파워 업!, 이거나 받아라!)
+    this.statusText = scene.add
+      .text(0, -110, '', {
+        fontFamily: 'Malgun Gothic, Apple SD Gothic Neo, sans-serif',
+        fontSize: '13px',
+        fontStyle: 'bold',
+        color: '#fde047',
+        backgroundColor: 'rgba(15,23,42,0.84)',
+        padding: { x: 6, y: 2 },
+        stroke: '#0f172a',
+        strokeThickness: 3,
+      })
+      .setOrigin(0.5)
+      .setVisible(false);
+
+    const children: Phaser.GameObjects.GameObject[] = [
       this.groundRing,
+      this.powerAuraGfx,
       this.shadow,
       this.sprite,
-      this.tagText,
-    ]);
+    ];
+    if (this.guardShieldSprite) children.push(this.guardShieldSprite);
+    children.push(this.dizzyGfx, this.tagText, this.statusText);
+
+    this.container = scene.add.container(this.x, this.y, children);
 
     this.updateControlBadge();
     this.syncTransform();
+  }
+
+  private get baseSheetKey(): string {
+    return this.heroId === 'zhaoyun'
+      ? 'zhaoyun_8dir'
+      : this.heroId === 'guanyu'
+        ? 'guanyu_sheet'
+        : this.heroId === 'zhangfei'
+          ? 'zhangfei_sheet'
+          : 'huangzhong_sheet';
   }
 
   public get profile(): HeroDataSpec {
@@ -287,6 +364,24 @@ export class Warrior {
 
   public get isHumanControlled(): boolean {
     return this.controlType === 'HUMAN';
+  }
+
+  public get isGuarding(): boolean {
+    return this.bodyState === 'GUARDING';
+  }
+
+  public get isIncapacitated(): boolean {
+    return (
+      this.isDefeated ||
+      this.bodyState === 'AIRBORNE_LAUNCH' ||
+      this.bodyState === 'KNOCKDOWN' ||
+      this.bodyState === 'RECOVER' ||
+      this.bodyState === 'DIZZY'
+    );
+  }
+
+  public get powerTier(): 0 | 1 | 2 | 3 {
+    return getPowerUpVisualTier(this.acquiredTreasures.length);
   }
 
   public get currentScale(): number {
@@ -359,6 +454,11 @@ export class Warrior {
     }
   }
 
+  public showShout(text: string, color = '#fde047', durationMs = 900): void {
+    this.statusText.setText(text).setColor(color).setVisible(true);
+    this.statusShoutTimerMs = durationMs;
+  }
+
   public addTreasure(treasureId: string): boolean {
     const def = TREASURE_BY_ID.get(treasureId);
     if (!def) return false;
@@ -376,6 +476,10 @@ export class Warrior {
     if (def.modifiers.healAmount) {
       this.heal(def.modifiers.healAmount);
     }
+
+    this.powerUpPulseMs = 950;
+    this.showShout(`✨ 파워 업! ★${this.acquiredTreasures.length}`, '#fde047', 1200);
+    this.callbacks.onHeroPowerUp?.(this, this.acquiredTreasures.length, def.nameKr);
     return true;
   }
 
@@ -384,6 +488,7 @@ export class Warrior {
     this.heroMods = createBaseHeroModifiers();
     this.maxHp = this.profile.maxHp;
     this.hp = Math.min(this.hp, this.maxHp);
+    this.powerAuraGfx.clear();
   }
 
   public heal(amount: number): void {
@@ -394,8 +499,15 @@ export class Warrior {
   public revive(hpRatio = 0.55): void {
     if (!this.isDefeated) return;
     this.isDefeated = false;
+    this.bodyState = 'NORMAL';
+    this.elevationZ = 0;
+    this.vz = 0;
+    this.dizzyTimerMs = 0;
+    this.pendingDizzyMs = 0;
+    this.dizzyGfx.clear();
     this.hp = Math.max(20, Math.round(this.maxHp * hpRatio));
     this.invulnTimerMs = 1500;
+    this.sprite.setTexture(this.baseSheetKey, this.heroId === 'zhaoyun' ? 2 : 0);
     this.sprite.rotation = 0;
     this.sprite.y = 6;
     this.container.setAlpha(1);
@@ -403,7 +515,12 @@ export class Warrior {
   }
 
   public triggerSpecial(input: HeroActionInput, ignoreCooldown = false): boolean {
-    if (this.isDefeated || this.isCharging || this.whiteDragonTimerMs > 0 || this.cycloneTimerMs > 0) {
+    if (
+      this.isIncapacitated ||
+      this.isCharging ||
+      this.whiteDragonTimerMs > 0 ||
+      this.cycloneTimerMs > 0
+    ) {
       return false;
     }
 
@@ -414,6 +531,7 @@ export class Warrior {
       return false;
     }
 
+    this.bodyState = 'NORMAL';
     if (this.isCarrying) this.dropCarriedObject();
     this.cancelAttack();
 
@@ -489,10 +607,18 @@ export class Warrior {
   }
 
   public pickUpObject(obj: EnvironmentalObject): boolean {
-    if (this.isDefeated || this.isCarrying || this.isAttacking || this.isCharging) return false;
+    if (
+      this.isIncapacitated ||
+      this.isGuarding ||
+      this.isCarrying ||
+      this.isAttacking ||
+      this.isCharging
+    ) {
+      return false;
+    }
     if (!obj.pickUpBy(this.id)) return false;
     this.carriedObject = obj;
-    this.carriedObject.syncToCarrier(this.x, this.y);
+    this.carriedObject.syncToCarrier(this.x, this.y, 0);
     return true;
   }
 
@@ -519,7 +645,8 @@ export class Warrior {
 
   public bufferInput(input: HeroActionInput): void {
     if (
-      this.isDefeated ||
+      this.isIncapacitated ||
+      this.isGuarding ||
       this.isCarrying ||
       this.isCharging ||
       this.whiteDragonTimerMs > 0 ||
@@ -558,36 +685,97 @@ export class Warrior {
     };
   }
 
-  public takeDamage(amount: number, dirX: number, dirY: number): boolean {
-    if (
-      this.isDefeated ||
-      this.invulnTimerMs > 0 ||
-      this.chargePhase === 'CHARGING' ||
-      this.whiteDragonTimerMs > 0
-    ) {
-      return false;
-    }
+  public takeDamage(
+    amount: number,
+    dirX: number,
+    dirY: number,
+    opts?: HeroHitOptions,
+  ): boolean {
+    const res = resolveHeroIncomingHit({
+      baseDamage: amount,
+      isGuarding: this.bodyState === 'GUARDING',
+      isInvulnerable:
+        this.invulnTimerMs > 0 ||
+        this.bodyState === 'AIRBORNE_LAUNCH' ||
+        this.bodyState === 'KNOCKDOWN' ||
+        this.bodyState === 'RECOVER',
+      isSuperArmored: this.chargePhase === 'CHARGING' || this.whiteDragonTimerMs > 0,
+      isDefeated: this.isDefeated,
+      consecutiveHits: this.consecutiveHitsTaken + 1,
+      opts,
+    });
 
-    const dmg = Math.max(1, Math.round(amount));
-    this.hp = Math.max(0, this.hp - dmg);
-    this.invulnTimerMs = 650;
-    this.hurtFlashTimerMs = 120;
+    if (res.outcome === 'IGNORED') return false;
 
     const len = Math.hypot(dirX, dirY) || 1;
-    this.knockbackVx = (dirX / len) * 195;
-    this.knockbackVy = (dirY / len) * 195 * PERSPECTIVE_CONFIG.verticalMoveRatio;
+    const nx = dirX / len;
+    const ny = dirY / len;
 
-    if (this.attackPhase === 'WINDUP') this.cancelAttack();
+    if (res.outcome === 'GUARDED') {
+      // Guard chip damage never kills if hero had > 1 HP
+      if (this.hp > 1) {
+        this.hp = Math.max(1, this.hp - res.finalDamage);
+      }
+      this.guardBlockFlashMs = 220;
+      this.invulnTimerMs = 240;
+      this.knockbackVx = nx * res.knockbackSpeed;
+      this.knockbackVy = ny * res.knockbackSpeed * PERSPECTIVE_CONFIG.verticalMoveRatio;
+      this.showShout('방어!', '#7dd3fc', 550);
+      this.callbacks.onHeroGuardBlock?.(this, Math.max(0, Math.round(amount) - res.finalDamage));
+      return true;
+    }
 
-    this.callbacks.onHeroHurt(this, dmg);
+    this.hp = Math.max(0, this.hp - res.finalDamage);
+    this.hurtFlashTimerMs = 140;
+    this.knockbackVx = nx * res.knockbackSpeed;
+    this.knockbackVy = ny * res.knockbackSpeed * PERSPECTIVE_CONFIG.verticalMoveRatio;
 
     if (this.hp <= 0) {
       this.isDefeated = true;
+      this.bodyState = 'KNOCKDOWN';
+      this.dizzyTimerMs = 0;
+      this.pendingDizzyMs = 0;
+      this.elevationZ = 0;
+      this.vz = 0;
       this.dropCarriedObject();
       this.cancelAttack();
       this.cancelCharge();
+      this.callbacks.onHeroHurt(this, res.finalDamage);
       this.callbacks.onHeroDefeated(this);
+      return true;
     }
+
+    if (res.outcome === 'KNOCKDOWN' || res.outcome === 'DIZZY') {
+      this.consecutiveHitsTaken = 0;
+      this.consecutiveHitResetMs = 0;
+      this.dropCarriedObject();
+      this.cancelAttack();
+      this.cancelCharge();
+      this.cycloneTimerMs = 0;
+      this.dizzyTimerMs = 0;
+      this.dizzyGfx.clear();
+
+      this.bodyState = 'AIRBORNE_LAUNCH';
+      this.elevationZ = 8;
+      this.vz = res.launchVz;
+      this.pendingDizzyMs = res.outcome === 'DIZZY' ? res.dizzyMs : 0;
+      this.setFacingToward(-nx, -ny);
+      this.callbacks.onHeroHurt(this, res.finalDamage);
+      return true;
+    }
+
+    // Standard STAGGER hit
+    this.consecutiveHitsTaken += 1;
+    this.consecutiveHitResetMs = 2100;
+    this.invulnTimerMs = 460;
+    if (this.attackPhase === 'WINDUP') this.cancelAttack();
+    if (this.bodyState === 'DIZZY') {
+      // Getting bonked snaps hero out of dizzy early so they aren't infinitely locked
+      this.bodyState = 'NORMAL';
+      this.dizzyTimerMs = 0;
+      this.dizzyGfx.clear();
+    }
+    this.callbacks.onHeroHurt(this, res.finalDamage);
     return true;
   }
 
@@ -599,6 +787,8 @@ export class Warrior {
     this.prevY = spawnY;
     this.vx = 0;
     this.vy = 0;
+    this.elevationZ = 0;
+    this.vz = 0;
     this.knockbackVx = 0;
     this.knockbackVy = 0;
     this.facingAngle = Math.PI / 2;
@@ -606,6 +796,15 @@ export class Warrior {
     this.maxHp = this.profile.maxHp;
     this.hp = this.maxHp;
     this.isDefeated = false;
+    this.bodyState = 'NORMAL';
+    this.bodyStateTimerMs = 0;
+    this.dizzyTimerMs = 0;
+    this.pendingDizzyMs = 0;
+    this.guardBlockFlashMs = 0;
+    this.consecutiveHitsTaken = 0;
+    this.consecutiveHitResetMs = 0;
+    this.statusShoutTimerMs = 0;
+    this.powerUpPulseMs = 0;
     this.invulnTimerMs = 0;
     this.hurtFlashTimerMs = 0;
     this.comboStep = 0;
@@ -618,6 +817,12 @@ export class Warrior {
     this.cancelCharge();
     this.container.setAlpha(1);
     this.sprite.clearTint();
+    this.sprite.setTexture(this.baseSheetKey, this.heroId === 'zhaoyun' ? 2 : 0);
+    this.sprite.rotation = 0;
+    this.sprite.y = 6;
+    this.guardShieldSprite?.setVisible(false);
+    this.dizzyGfx.clear();
+    this.statusText.setVisible(false);
     this.syncTransform();
   }
 
@@ -634,23 +839,178 @@ export class Warrior {
     if (this.invulnTimerMs > 0) this.invulnTimerMs = Math.max(0, this.invulnTimerMs - deltaMs);
     if (this.hurtFlashTimerMs > 0) this.hurtFlashTimerMs = Math.max(0, this.hurtFlashTimerMs - deltaMs);
     if (this.specialCooldownMs > 0) this.specialCooldownMs = Math.max(0, this.specialCooldownMs - deltaMs);
+    if (this.guardBlockFlashMs > 0) this.guardBlockFlashMs = Math.max(0, this.guardBlockFlashMs - deltaMs);
+    if (this.powerUpPulseMs > 0) this.powerUpPulseMs = Math.max(0, this.powerUpPulseMs - deltaMs);
+
+    if (this.consecutiveHitResetMs > 0) {
+      this.consecutiveHitResetMs -= deltaMs;
+      if (this.consecutiveHitResetMs <= 0) this.consecutiveHitsTaken = 0;
+    }
+
+    if (this.statusShoutTimerMs > 0) {
+      this.statusShoutTimerMs -= deltaMs;
+      if (this.statusShoutTimerMs <= 0) {
+        this.statusText.setVisible(false);
+      }
+    }
 
     if (this.attackPhase === 'NONE' && this.comboWindowTimerMs > 0) {
       this.comboWindowTimerMs = Math.max(0, this.comboWindowTimerMs - deltaMs);
       if (this.comboWindowTimerMs <= 0) this.comboStep = 0;
     }
 
+    this.updatePowerAuraVisuals(dt, deltaMs);
+
     if (this.isDefeated) {
       this.vx *= Math.exp(-8 * dt);
       this.vy *= Math.exp(-8 * dt);
-      this.sprite.rotation = Math.PI * 0.45;
-      this.sprite.y = 14;
+      this.guardShieldSprite?.setVisible(false);
+      this.dizzyGfx.clear();
+      this.applyKoPoseVisual(0);
       this.syncTransform();
       return;
     }
 
+    // 0A. Airborne Knockback Launch (launched by Boss/Elite/3-hit stagger)
+    if (this.bodyState === 'AIRBORNE_LAUNCH') {
+      this.guardShieldSprite?.setVisible(false);
+      const body: AirborneBodyState = {
+        x: this.x,
+        y: this.y,
+        vx: this.knockbackVx,
+        vy: this.knockbackVy,
+        elevationZ: this.elevationZ,
+        vz: this.vz,
+      };
+      const step = stepAirbornePhysics(body, dt, 1020, 4.4, 0.7);
+      const clamped = clampToArena(body.x, body.y, this.collisionRadius);
+      this.x = clamped.x;
+      this.y = clamped.y;
+      this.knockbackVx = body.vx;
+      this.knockbackVy = body.vy;
+      this.elevationZ = body.elevationZ;
+      this.vz = body.vz;
+
+      const tilt = Phaser.Math.Clamp(-this.vz * 0.0012, -0.35, 0.35);
+      this.applyKoPoseVisual(tilt);
+
+      if (step.landed) {
+        this.elevationZ = 0;
+        this.vz = 0;
+        this.callbacks.onHeroLanded?.(this, step.impactSpeed > 130);
+        this.bodyState = 'KNOCKDOWN';
+        this.bodyStateTimerMs = this.pendingDizzyMs > 0 ? 440 : 620;
+      }
+
+      this.syncTransform();
+      return;
+    }
+
+    // 0B. Flat on Ground Knockdown -> Getting Back Up
+    if (this.bodyState === 'KNOCKDOWN') {
+      this.guardShieldSprite?.setVisible(false);
+      const slideDamp = Math.exp(-10 * dt);
+      this.knockbackVx *= slideDamp;
+      this.knockbackVy *= slideDamp;
+      const clamped = clampToArena(
+        this.x + this.knockbackVx * dt,
+        this.y + this.knockbackVy * dt,
+        this.collisionRadius,
+      );
+      this.x = clamped.x;
+      this.y = clamped.y;
+      this.elevationZ = 0;
+
+      // Mashing keys lets the player spring up slightly faster!
+      const mashBoost =
+        input.lightAttackPressed || input.heavyAttackPressed || input.interactPressed ? 90 : 0;
+      this.bodyStateTimerMs -= deltaMs + mashBoost;
+      this.applyKoPoseVisual(0);
+      this.drawDizzyStars(dt, 0.75);
+
+      if (this.bodyStateTimerMs <= 0) {
+        this.bodyState = 'RECOVER';
+        this.bodyStateTimerMs = 300;
+        this.dizzyGfx.clear();
+      }
+      this.syncTransform();
+      return;
+    }
+
+    // 0C. Smooth Push-Up Recovery -> NORMAL (with wake-up invuln) OR DIZZY (어질어질!)
+    if (this.bodyState === 'RECOVER') {
+      this.guardShieldSprite?.setVisible(false);
+      this.bodyStateTimerMs -= deltaMs;
+      const t = Phaser.Math.Clamp(1 - this.bodyStateTimerMs / 300, 0, 1);
+      if (this.sprite.texture.key !== this.baseSheetKey) {
+        this.sprite.setTexture(this.baseSheetKey, this.heroId === 'zhaoyun' ? 2 : 0);
+      }
+      const baseS = this.heroId === 'zhaoyun' ? this.zhaoYunDirScale : this.customSheetScale;
+      this.sprite.setScale(baseS * (1.16 - t * 0.16), baseS * (0.68 + t * 0.32));
+      this.sprite.rotation = Math.sin(t * Math.PI) * 0.12;
+      this.sprite.y = 14 - t * 8;
+      this.sprite.clearTint();
+
+      if (this.bodyStateTimerMs <= 0) {
+        this.sprite.rotation = 0;
+        this.sprite.y = 6;
+        if (this.pendingDizzyMs > 0) {
+          this.bodyState = 'DIZZY';
+          this.dizzyTimerMs = this.pendingDizzyMs;
+          this.pendingDizzyMs = 0;
+          this.invulnTimerMs = 450;
+          this.showShout('어질어질! (연타!)', '#fde047', 1200);
+          this.callbacks.onHeroDizzy?.(this);
+        } else {
+          this.bodyState = 'NORMAL';
+          this.invulnTimerMs = 1100;
+        }
+      }
+      this.syncTransform();
+      return;
+    }
+
+    // 0D. Dizzy State (어질어질! — wobbling with spinning stars; key mashing shakes it off!)
+    if (this.bodyState === 'DIZZY') {
+      this.guardShieldSprite?.setVisible(false);
+      this.vx *= Math.exp(-10 * dt);
+      this.vy *= Math.exp(-10 * dt);
+      const mashShave =
+        input.lightAttackPressed || input.heavyAttackPressed || input.interactPressed ? 240 : 0;
+      const moveShave = input.isMoving ? deltaMs * 0.45 : 0;
+      this.dizzyTimerMs -= deltaMs + mashShave + moveShave;
+
+      if (this.sprite.texture.key !== this.baseSheetKey) {
+        this.sprite.setTexture(this.baseSheetKey, this.heroId === 'zhaoyun' ? 2 : 0);
+      }
+      const baseS = this.heroId === 'zhaoyun' ? this.zhaoYunDirScale : this.customSheetScale;
+      this.dizzyPhase += dt * 7.5;
+      this.sprite.setScale(baseS, baseS);
+      this.sprite.rotation = Math.sin(this.dizzyPhase) * 0.18;
+      this.sprite.x = Math.cos(this.dizzyPhase) * 3.5;
+      this.sprite.y = 6;
+      this.sprite.setTint(0xfef08a);
+      this.drawDizzyStars(dt, 1.0);
+
+      if (this.dizzyTimerMs <= 0) {
+        this.bodyState = 'NORMAL';
+        this.invulnTimerMs = 650;
+        this.sprite.x = 0;
+        this.sprite.rotation = 0;
+        this.sprite.clearTint();
+        this.dizzyGfx.clear();
+        this.showShout('정신 번쩍!', '#86efac', 550);
+      }
+      this.syncTransform();
+      return;
+    }
+
+    this.dizzyGfx.clear();
+    this.sprite.x = 0;
+
     // 1. Zhang Fei Bulldozer Charge
     if (this.isCharging) {
+      this.guardShieldSprite?.setVisible(false);
       this.updateCharge(deltaMs, dt, resolveProps);
       this.updateAnimation(dt, deltaMs);
       this.syncTransform();
@@ -659,6 +1019,7 @@ export class Warrior {
 
     // 2. Zhao Yun White Dragon Rush (real world-space forward dash + multi-strikes!)
     if (this.whiteDragonTimerMs > 0) {
+      this.guardShieldSprite?.setVisible(false);
       this.whiteDragonTimerMs = Math.max(0, this.whiteDragonTimerMs - deltaMs);
       this.whiteDragonStrikeTickMs -= deltaMs;
       const spdFactor = getDepthSpeedFactor(this.y);
@@ -687,6 +1048,7 @@ export class Warrior {
 
     // 3. Guan Yu Azure Dragon Cyclone (wide spinning area pulses!)
     if (this.cycloneTimerMs > 0) {
+      this.guardShieldSprite?.setVisible(false);
       this.cycloneTimerMs = Math.max(0, this.cycloneTimerMs - deltaMs);
       this.cyclonePulseTickMs -= deltaMs;
       // Allow gentle drift movement while spinning
@@ -712,11 +1074,24 @@ export class Warrior {
       return;
     }
 
-    this.stepAttackStateMachine(deltaMs, input);
+    // 4. Hero Guard Toggle (C / Shift / Gamepad LT-RT)
+    const canGuardNow =
+      !this.isCarrying && this.attackPhase === 'NONE' && !this.isCharging;
+    if (canGuardNow && input.guardHeld) {
+      this.bodyState = 'GUARDING';
+      this.bufferedAttack = null;
+    } else if (this.bodyState === 'GUARDING') {
+      this.bodyState = 'NORMAL';
+    }
+
+    if (this.bodyState !== 'GUARDING') {
+      this.stepAttackStateMachine(deltaMs, input);
+    }
 
     const speedFactor = getDepthSpeedFactor(this.y);
     const attackMoveMul = this.currentAttack ? this.currentAttack.moveSpeedFactor : 1.0;
     const carryMoveMul = this.carriedObject ? this.carriedObject.spec.carrySpeedFactor : 1.0;
+    const guardMoveMul = this.bodyState === 'GUARDING' ? 0.24 : 1.0;
     const heroSpeedMul = this.profile.speedMultiplier;
 
     // Soft ally separation so 4 heroes never block each other!
@@ -735,7 +1110,13 @@ export class Warrior {
     }
 
     const targetVx =
-      input.x * PLAYER_CONFIG.baseMoveSpeed * heroSpeedMul * speedFactor * attackMoveMul * carryMoveMul;
+      input.x *
+      PLAYER_CONFIG.baseMoveSpeed *
+      heroSpeedMul *
+      speedFactor *
+      attackMoveMul *
+      carryMoveMul *
+      guardMoveMul;
     const targetVy =
       input.y *
       PLAYER_CONFIG.baseMoveSpeed *
@@ -743,7 +1124,8 @@ export class Warrior {
       PERSPECTIVE_CONFIG.verticalMoveRatio *
       speedFactor *
       attackMoveMul *
-      carryMoveMul;
+      carryMoveMul *
+      guardMoveMul;
 
     const rate = input.isMoving ? PLAYER_CONFIG.accelRate : PLAYER_CONFIG.decelRate;
     const maxStep = rate * dt;
@@ -788,7 +1170,7 @@ export class Warrior {
       if (this.carriedObject.isBroken) {
         this.carriedObject = null;
       } else {
-        this.carriedObject.syncToCarrier(this.x, this.y);
+        this.carriedObject.syncToCarrier(this.x, this.y, this.carryBobOffset);
       }
     }
   }
@@ -1037,8 +1419,12 @@ export class Warrior {
   }
 
   private updateAnimation(dt: number, deltaMs: number): void {
+    this.carryBobOffset = 0;
+
     if (this.hurtFlashTimerMs > 0) {
       this.sprite.setTintFill(0xffffff);
+    } else if (this.powerUpPulseMs > 0 && Math.floor(this.powerUpPulseMs / 80) % 2 === 0) {
+      this.sprite.setTint(0xfef08a);
     } else if (this.chargePhase === 'ANTICIPATION') {
       this.sprite.setTint(0xfef08a);
     } else if (this.chargePhase === 'CHARGING') {
@@ -1047,14 +1433,69 @@ export class Warrior {
       this.sprite.setTint(0xbae6fd);
     } else if (this.cycloneTimerMs > 0) {
       this.sprite.setTint(0xbbf7d0);
+    } else if (this.bodyState === 'GUARDING') {
+      this.sprite.setTint(this.guardBlockFlashMs > 0 ? 0xfef08a : 0xe0f2fe);
     } else {
       this.sprite.clearTint();
     }
 
-    if (this.invulnTimerMs > 0 && this.hurtFlashTimerMs <= 0) {
+    if (this.invulnTimerMs > 0 && this.hurtFlashTimerMs <= 0 && this.bodyState !== 'GUARDING') {
       this.container.setAlpha(Math.floor(this.invulnTimerMs / 60) % 2 === 0 ? 1 : 0.48);
     } else {
       this.container.setAlpha(1);
+    }
+
+    // Guard Shield Dome (16-bit translucent energy shield!)
+    if (this.guardShieldSprite) {
+      if (this.bodyState === 'GUARDING') {
+        const pulse = 0.68 + Math.sin(this.powerAuraPhase * 8) * 0.03;
+        const blockBoost = this.guardBlockFlashMs > 0 ? 0.14 : 0;
+        this.guardShieldSprite.setVisible(true);
+        this.guardShieldSprite.setScale(pulse + blockBoost);
+        this.guardShieldSprite.setAlpha(this.guardBlockFlashMs > 0 ? 1.0 : 0.82);
+        if (this.guardBlockFlashMs > 0) {
+          this.guardShieldSprite.setTint(0xfef08a);
+        } else {
+          this.guardShieldSprite.clearTint();
+        }
+      } else {
+        this.guardShieldSprite.setVisible(false);
+      }
+    }
+
+    // Dedicated Overhead Carrying Pose (2 hands raised high, zero weapon overlap!)
+    if (this.isCarrying && this.scene.textures.exists('hero_special_poses')) {
+      const carryFrame = getHeroSpecialPoseFrames(this.heroId).carryFrame;
+      if (this.sprite.texture.key !== 'hero_special_poses') {
+        this.sprite.setTexture('hero_special_poses', carryFrame);
+      } else {
+        this.sprite.setFrame(carryFrame);
+      }
+
+      const currentSpeed = this.speed;
+      const isMoving = currentSpeed > 22;
+      if (this.dustCooldownMs > 0) this.dustCooldownMs -= deltaMs;
+
+      if (isMoving) {
+        this.walkBobPhase += dt * 11.5;
+        this.carryBobOffset = Math.abs(Math.sin(this.walkBobPhase)) * 5.0;
+        this.sprite.y = 6 - this.carryBobOffset;
+        this.sprite.rotation = Math.cos(this.walkBobPhase) * 0.045;
+        if (this.dustCooldownMs <= 0 && currentSpeed > 80) {
+          this.spawnFootstepDust(0.95);
+          this.callbacks.onFootstep(this, this.heroId === 'zhangfei');
+          this.dustCooldownMs = 230;
+        }
+      } else {
+        this.idleBreathPhase += dt * 2.8;
+        this.carryBobOffset = Math.sin(this.idleBreathPhase) * 1.5;
+        this.sprite.y = 6 - this.carryBobOffset;
+        this.sprite.rotation = Phaser.Math.Linear(this.sprite.rotation, 0, 0.25);
+      }
+
+      this.sprite.setFlipX(Math.cos(this.facingAngle) < -0.15);
+      this.sprite.setScale(this.customSheetScale, this.customSheetScale);
+      return;
     }
 
     if (this.heroId === 'zhaoyun') {
@@ -1062,6 +1503,198 @@ export class Warrior {
     } else {
       this.updateCustomHeroVisuals(dt, deltaMs);
     }
+
+    // Defensive guard crouch feel
+    if (this.bodyState === 'GUARDING') {
+      this.sprite.scaleX *= 1.05;
+      this.sprite.scaleY *= 0.92;
+      this.sprite.y += 3;
+    }
+
+    // Awakened Power Tier 3 (or Zhao Yun afterimage treasure): crisp elemental afterimage ghosts!
+    if (this.afterimageCooldownMs > 0) {
+      this.afterimageCooldownMs -= deltaMs;
+    } else {
+      const shouldGhost =
+        (this.powerTier >= 3 && (this.isAttacking || this.isCharging || this.speed > 170)) ||
+        (this.powerTier >= 2 && (this.isCharging || this.whiteDragonTimerMs > 0 || this.cycloneTimerMs > 0)) ||
+        (this.heroMods.afterimageTrail && (this.isAttacking || this.whiteDragonTimerMs > 0));
+      if (shouldGhost) {
+        this.spawnAfterimageGhost();
+        this.afterimageCooldownMs = this.powerTier >= 3 ? 65 : 95;
+      }
+    }
+  }
+
+  private applyKoPoseVisual(tilt: number): void {
+    if (this.scene.textures.exists('hero_special_poses')) {
+      const koFrame = getHeroSpecialPoseFrames(this.heroId).koFrame;
+      if (this.sprite.texture.key !== 'hero_special_poses') {
+        this.sprite.setTexture('hero_special_poses', koFrame);
+      } else {
+        this.sprite.setFrame(koFrame);
+      }
+      this.sprite.setFlipX(Math.cos(this.facingAngle) < 0);
+      this.sprite.setScale(this.customSheetScale, this.customSheetScale);
+      this.sprite.rotation = tilt;
+      this.sprite.y = 12 - this.elevationZ;
+    } else {
+      this.sprite.rotation = Math.PI * 0.45 + tilt;
+      this.sprite.y = 14 - this.elevationZ;
+    }
+
+    if (this.hurtFlashTimerMs > 0) {
+      this.sprite.setTintFill(0xffffff);
+    } else {
+      this.sprite.clearTint();
+    }
+
+    const shScale = Phaser.Math.Clamp(1 - this.elevationZ * 0.005, 0.42, 1);
+    this.shadow.setScale(shScale, shScale);
+    this.shadow.setAlpha(0.42 * shScale);
+  }
+
+  private drawDizzyStars(dt: number, scaleMul = 1.0): void {
+    this.dizzyPhase += dt * 4.8;
+    const g = this.dizzyGfx;
+    g.clear();
+    const cy = this.bodyState === 'KNOCKDOWN' ? -24 : -78;
+    const rx = 24 * scaleMul;
+    const ry = 8.5 * scaleMul;
+
+    // Subtle swirling halo ring
+    g.lineStyle(1.8, 0xfef08a, 0.72);
+    g.strokeEllipse(0, cy, rx * 2.05, ry * 2.05);
+
+    // 3 orbiting 4-point cartoon golden stars
+    for (let i = 0; i < 3; i++) {
+      const ang = this.dizzyPhase + (i * Math.PI * 2) / 3;
+      const sx = Math.cos(ang) * rx;
+      const sy = cy + Math.sin(ang) * ry;
+      const rOuter = (i === 0 ? 7.5 : 6.0) * scaleMul;
+      const rInner = rOuter * 0.36;
+      g.fillStyle(i % 2 === 0 ? 0xfde047 : 0xffffff, 0.98);
+      g.beginPath();
+      for (let p = 0; p < 8; p++) {
+        const r = p % 2 === 0 ? rOuter : rInner;
+        const a = (p * Math.PI) / 4 + this.dizzyPhase * 0.8;
+        const px = sx + Math.cos(a) * r;
+        const py = sy + Math.sin(a) * r;
+        if (p === 0) g.moveTo(px, py);
+        else g.lineTo(px, py);
+      }
+      g.closePath();
+      g.fillPath();
+    }
+  }
+
+  private updatePowerAuraVisuals(dt: number, deltaMs: number): void {
+    this.powerAuraPhase += dt * 3.2;
+    const tier = this.powerTier;
+    const count = this.acquiredTreasures.length;
+    const g = this.powerAuraGfx;
+    g.clear();
+
+    if (tier === 0 || this.isDefeated) return;
+
+    const accent = this.profile.accentHex;
+    const pulse = 0.5 + Math.sin(this.powerAuraPhase * 2.4) * 0.25;
+    const burstBoost = this.powerUpPulseMs > 0 ? 0.35 : 0;
+
+    // Tier 1+: Glowing pulsing elemental ground halo + orbiting golden star pips!
+    g.fillStyle(accent, 0.14 + tier * 0.05 + burstBoost * 0.2);
+    g.fillEllipse(0, 2, 66 + tier * 8, 25 + tier * 3);
+    g.lineStyle(2.5 + tier * 0.6, accent, 0.68 + pulse * 0.25);
+    g.strokeEllipse(0, 2, 68 + tier * 8, 26 + tier * 3);
+
+    // Orbiting golden star pips showing exact treasure/skill evolution strength (up to 5 pips)
+    const pips = Math.min(5, count);
+    for (let i = 0; i < pips; i++) {
+      const ang = this.powerAuraPhase * 1.45 + (i * Math.PI * 2) / pips;
+      const px = Math.cos(ang) * (35 + tier * 4);
+      const py = 2 + Math.sin(ang) * (13 + tier * 1.5);
+      g.fillStyle(0xfde047, 0.95);
+      g.fillCircle(px, py, 3.0 + (tier >= 3 ? 0.8 : 0));
+      g.fillStyle(0xffffff, 0.95);
+      g.fillCircle(px, py, 1.3);
+    }
+
+    // Tier 2+: Dual counter-rotating outer golden-elemental rune ring!
+    if (tier >= 2) {
+      const outerW = 84 + Math.sin(this.powerAuraPhase * 3.0) * 4;
+      const outerH = 31 + Math.sin(this.powerAuraPhase * 3.0) * 1.5;
+      g.lineStyle(2.0, 0xfde047, 0.55 + pulse * 0.3);
+      g.strokeEllipse(0, 2, outerW, outerH);
+
+      // Periodic rising ki sparks floating up from the powered-up warrior!
+      if (this.kiSparkCooldownMs > 0) {
+        this.kiSparkCooldownMs -= deltaMs;
+      } else {
+        this.spawnKiSpark(tier >= 3 ? 0xfde047 : accent);
+        this.kiSparkCooldownMs = tier >= 3 ? 110 : 210;
+      }
+    }
+
+    // Tier 3 (5+ Treasures — Awakened!): Radiating golden flame halo behind hero!
+    if (tier >= 3) {
+      const flameH = 74 + Math.sin(this.powerAuraPhase * 5.2) * 8;
+      g.fillStyle(0xfde047, 0.14 + pulse * 0.1);
+      g.fillEllipse(0, -34, 58, flameH);
+      g.lineStyle(2.6, 0xfef08a, 0.62 + pulse * 0.25);
+      g.strokeEllipse(0, -34, 62, flameH + 4);
+    }
+  }
+
+  private spawnKiSpark(tintHex: number): void {
+    if (!this.scene.textures.exists('spark_particle')) return;
+    const scale = this.currentScale;
+    const spark = this.scene.add
+      .image(
+        this.x + Phaser.Math.Between(-22, 22) * scale,
+        this.y - Phaser.Math.Between(4, 24) * scale,
+        'spark_particle',
+      )
+      .setTint(tintHex)
+      .setScale(0.65 * scale)
+      .setAlpha(0.9)
+      .setDepth(getDepthOrder(this.y) + 5);
+
+    this.scene.tweens.add({
+      targets: spark,
+      y: spark.y - Phaser.Math.Between(36, 68) * scale,
+      x: spark.x + Phaser.Math.Between(-10, 10) * scale,
+      scale: 0.15 * scale,
+      alpha: 0,
+      duration: 420,
+      ease: 'Quad.easeOut',
+      onComplete: () => spark.destroy(),
+    });
+  }
+
+  private spawnAfterimageGhost(): void {
+    const scale = this.currentScale;
+    const ghost = this.scene.add
+      .image(
+        this.x,
+        this.y + this.sprite.y * scale,
+        this.sprite.texture.key,
+        this.sprite.frame.name,
+      )
+      .setOrigin(0.5, 0.92)
+      .setFlipX(this.sprite.flipX)
+      .setScale(this.sprite.scaleX * scale, this.sprite.scaleY * scale)
+      .setRotation(this.sprite.rotation)
+      .setTint(this.powerTier >= 3 ? 0xfde047 : this.profile.accentHex)
+      .setAlpha(0.45)
+      .setDepth(getDepthOrder(this.y) - 2);
+
+    this.scene.tweens.add({
+      targets: ghost,
+      alpha: 0,
+      duration: 190,
+      ease: 'Quad.easeOut',
+      onComplete: () => ghost.destroy(),
+    });
   }
 
   private updateCustomHeroVisuals(dt: number, deltaMs: number): void {
@@ -1170,7 +1803,12 @@ export class Warrior {
       this.dustCooldownMs = 210;
     }
 
-    this.sprite.setFrame(frame);
+    const baseKey = this.baseSheetKey;
+    if (this.sprite.texture.key !== baseKey) {
+      this.sprite.setTexture(baseKey, frame);
+    } else {
+      this.sprite.setFrame(frame);
+    }
     this.sprite.setFlipX(faceLeft);
     this.sprite.setScale(sx, sy);
     this.sprite.rotation = rot;
@@ -1313,6 +1951,10 @@ export class Warrior {
     this.container.setPosition(this.x, this.y);
     this.container.setScale(scale);
     this.container.setDepth(getDepthOrder(this.y));
+    if (this.bodyState !== 'AIRBORNE_LAUNCH') {
+      this.shadow.setScale(1, 1);
+      this.shadow.setAlpha(0.42);
+    }
   }
 
   private angleToSector(radians: number): number {

@@ -47,6 +47,7 @@ import {
 import { StageDirector, StageStepResult } from '../core/StageDirector';
 import { Bandit } from '../entities/Bandit';
 import { BanditChief } from '../entities/BanditChief';
+import { BrokenWreckage, getWreckageFramesForKind } from '../entities/BrokenWreckage';
 import { EnvironmentalObject } from '../entities/EnvironmentalObject';
 import { Projectile } from '../entities/Projectile';
 import { SurfaceHazard } from '../entities/SurfaceHazard';
@@ -121,15 +122,18 @@ export class BrawlScene extends Phaser.Scene {
   private readonly projectiles: Projectile[] = [];
   private readonly bandits: Bandit[] = [];
   private readonly envObjects: EnvironmentalObject[] = [];
+  private readonly wreckages: BrokenWreckage[] = [];
   private readonly hazards: SurfaceHazard[] = [];
   private readonly treasurePickups: TreasurePickup[] = [];
   private boss: BanditChief | null = null;
 
   private nextBanditSeq = 1;
   private nextObjectSeq = 1;
+  private nextWreckageSeq = 1;
   private nextHazardSeq = 1;
   private nextProjectileSeq = 1;
   private nextTreasureSeq = 1;
+  private readonly MAX_WRECKAGES = 36;
 
   private enemiesDefeated = 0;
   private comboHits = 0;
@@ -241,6 +245,7 @@ export class BrawlScene extends Phaser.Scene {
           onClearDebris: () => {
             this.debris.clearAll();
             this.clearAllHazards();
+            this.clearAllWreckages();
           },
           onTriggerSpecial: (heroId) => this.debugTriggerHeroSpecial(heroId),
           onForceEnemyPanic: () => {
@@ -413,6 +418,7 @@ export class BrawlScene extends Phaser.Scene {
           this.heroes,
           this.bandits,
           this.envObjects,
+          this.boss,
         );
       }
       heroInputs.set(hero.heroId, actionInput);
@@ -457,16 +463,29 @@ export class BrawlScene extends Phaser.Scene {
         const inp = heroInputs.get(hero.heroId);
         if (!inp) continue;
 
-        if (inp.specialPressed && !hero.isDefeated) {
+        if (inp.specialPressed && !hero.isIncapacitated) {
           hero.triggerSpecial(inp);
         }
-        if (inp.interactPressed && !hero.isDefeated) {
+        if (inp.interactPressed && !hero.isIncapacitated) {
           this.handleHeroInteract(hero);
         }
 
         hero.update(delta, inp, this.heroes, (x, y, r) =>
           this.arena.resolvePropCollisions(x, y, r),
         );
+
+        // Running fast or charging kicks broken planks, bowls & shards physically across the courtyard!
+        if (!hero.isDefeated && (hero.isChargeActive || hero.speed > 175)) {
+          this.kickNearbyWreckage(
+            hero.x,
+            hero.y,
+            hero.isChargeActive ? 68 : 44,
+            hero.isChargeActive ? 340 : 120,
+            hero.vx,
+            hero.vy,
+            hero.isChargeActive ? 255 : 125,
+          );
+        }
 
         this.resolveHeroMeleeHits(hero);
         if (hero.isChargeActive) {
@@ -503,6 +522,16 @@ export class BrawlScene extends Phaser.Scene {
         if (obj.readyForRemoval) {
           obj.destroy();
           this.envObjects.splice(i, 1);
+        }
+      }
+
+      // Update persistent broken wreckage pieces with live 2.5D bounce physics!
+      for (let i = this.wreckages.length - 1; i >= 0; i--) {
+        const w = this.wreckages[i];
+        w.update(delta);
+        if (w.readyForRemoval) {
+          w.destroy();
+          this.wreckages.splice(i, 1);
         }
       }
 
@@ -772,11 +801,13 @@ export class BrawlScene extends Phaser.Scene {
       onHeavyStep: (b) => {
         this.audio.playHeavyFootstep();
         this.debris.spawn('DUST_CLOUD', b.x, b.y);
+        this.kickNearbyWreckage(b.x, b.y, 92, 165, 0, 0, 145);
         this.screenShake.trigger(3.2, 85);
       },
       onRoar: (b) => {
         this.audio.playBossRoar();
         this.spawnShockwave(b.x, b.y, 0xef4444, 160);
+        this.kickNearbyWreckage(b.x, b.y, 145, 220, 0, 0, 185);
         this.screenShake.trigger(6.5, 180);
       },
       onClubSwing: () => this.audio.playStrongWhoosh(),
@@ -784,11 +815,13 @@ export class BrawlScene extends Phaser.Scene {
         this.audio.playBossHeavySlam();
         this.spawnShockwave(b.x, b.y, 0xf97316, radius * 1.15);
         this.debris.spawn('DUST_CLOUD', b.x, b.y);
+        this.kickNearbyWreckage(b.x, b.y, radius * 1.3, 360, 0, 0, 290);
         this.screenShake.trigger(8.5, 220, 0, 1);
       },
       onRushStart: (b) => {
         this.audio.playChargeRush();
         this.debris.spawn('DUST_CLOUD', b.x, b.y);
+        this.kickNearbyWreckage(b.x, b.y, 110, 270, 0, 0, 210);
       },
       onRallyBandits: (b) => {
         this.audio.playBossRoar();
@@ -803,6 +836,7 @@ export class BrawlScene extends Phaser.Scene {
       onEnraged: (b) => {
         this.audio.playBossRoar();
         this.spawnShockwave(b.x, b.y, 0xef4444, 220);
+        this.kickNearbyWreckage(b.x, b.y, 210, 320, 0, 0, 260);
         this.screenShake.trigger(8.0, 260);
         this.stageOverlay.showWaveBanner('🔥 산적 두목 광분!', '공격이 더욱 거세집니다! 사물로 기절시키세요!', true);
         // Cowardly bandits panic when the boss rages!
@@ -816,9 +850,21 @@ export class BrawlScene extends Phaser.Scene {
         this.stageDirector.addScoreEvent(null, 200);
         this.spawnShockwave(b.x, b.y, 0xfde047, 130);
       },
-      onHitHero: (heroId, dmg, dx, dy) => {
+      onHitHero: (heroId, dmg, dx, dy, heavy) => {
         const h = this.heroes.find((x) => x.id === heroId);
-        h?.takeDamage(dmg, dx, dy);
+        if (!h) return;
+        const bossState = this.boss?.state;
+        const isDizzyAttack =
+          bossState === 'SLAM_ACTIVE' ||
+          bossState === 'RUSH_ACTIVE' ||
+          (bossState === 'CLUB_ACTIVE' && Math.random() < 0.35);
+        h.takeDamage(dmg, dx, dy, {
+          heavy: heavy || true,
+          causesDizzy: isDizzyAttack,
+          knockdownForce: bossState === 'SLAM_ACTIVE' ? 350 : 305,
+          launchVz: bossState === 'SLAM_ACTIVE' ? 275 : 235,
+          dizzyDurationMs: bossState === 'SLAM_ACTIVE' ? 2200 : 1800,
+        });
       },
       onAccidentalBanditHit: (b, radius, dx, dy) => {
         // Hilarious: Boss accidentally bonks his own nearby bandits!
@@ -1062,7 +1108,10 @@ export class BrawlScene extends Phaser.Scene {
           } else {
             this.audio.playLightWhoosh();
           }
-          this.vfx.spawnSpearTrail(ax, ay, dirX, dirY, attackType, range, h.heroId);
+          this.vfx.spawnSpearTrail(ax, ay, dirX, dirY, attackType, range, h.heroId, h.powerTier);
+          if (attackType === 'HEAVY' || attackType === 'LIGHT_3') {
+            this.kickNearbyWreckage(ax + dirX * 48, ay + dirY * 26, 82, 235, dirX, dirY, 195);
+          }
           // Zhao Yun Tier 3 Treasure: Blue spear afterimage visual burst!
           if (h.heroId === 'zhaoyun' && h.heroMods.afterimageTrail) {
             this.spawnShockwave(ax + dirX * 32, ay + dirY * 18, 0x38bdf8, 68);
@@ -1073,6 +1122,7 @@ export class BrawlScene extends Phaser.Scene {
           this.audio.playZhangFeiRoar();
           this.debris.spawn('DUST_CLOUD', h.x, h.y);
           this.spawnShockwave(h.x, h.y, 0xc084fc, 110);
+          this.kickNearbyWreckage(h.x, h.y, 125, 220, 0, 0, 190);
           this.screenShake.trigger(4.5, 140);
           this.broadcastFearWave(h.x, h.y, 360, 34);
         },
@@ -1080,11 +1130,13 @@ export class BrawlScene extends Phaser.Scene {
           this.audio.playChargeRush();
           this.debris.spawn('DUST_CLOUD', h.x, h.y, -h.chargeDirX, -h.chargeDirY);
           this.vfx.spawnChargeFlameTrail(h.x, h.y, h.chargeDirX, h.chargeDirY);
+          this.kickNearbyWreckage(h.x, h.y, 110, 310, h.chargeDirX, h.chargeDirY, 240);
           this.broadcastFearWave(h.x, h.y, 320, 26);
         },
         onZhangFeiChargeSkid: (h) => {
           this.audio.playChargeSkid();
           this.debris.spawn('LANDING_DUST', h.x, h.y);
+          this.kickNearbyWreckage(h.x, h.y, 100, 240, h.chargeDirX, h.chargeDirY, 200);
           // Zhang Fei Tier 5 Treasure: Giant final shockwave at end of Rampaging Charge!
           if (h.heroMods.chargeFinalShockwave) {
             this.executeZhangFeiFinalShockwave(h);
@@ -1106,6 +1158,30 @@ export class BrawlScene extends Phaser.Scene {
             this.comboHits = 0;
             this.lastComboMilestone = 0;
           }
+        },
+        onHeroGuardBlock: (h) => {
+          this.audio.playGuardBlock();
+          this.vfx.spawnGuardBlockVfx(h.x, h.y);
+          if (h.isHumanControlled) {
+            this.hitStop.trigger(24, 'LIGHT');
+            this.screenShake.trigger(2.6, 70);
+          }
+        },
+        onHeroLanded: (h, strong) => {
+          this.audio.playKnockdownLanding();
+          this.vfx.spawnLandingImpact(h.x, h.y, strong);
+          this.kickNearbyWreckage(h.x, h.y, 88, 210, 0, 0, 175);
+          if (strong && h.isHumanControlled) {
+            this.screenShake.trigger(4.2, 105, 0, 1);
+          }
+        },
+        onHeroDizzy: () => {
+          this.audio.playHeroDizzy();
+        },
+        onHeroPowerUp: (h) => {
+          this.audio.playPowerUpBurst();
+          this.vfx.spawnPowerUpVfx(h.x, h.y, h.profile.accentHex);
+          this.spawnShockwave(h.x, h.y, 0xfde047, 155);
         },
         onHeroDefeated: () => {
           this.screenShake.trigger(7.5, 200);
@@ -1195,6 +1271,7 @@ export class BrawlScene extends Phaser.Scene {
     const radius = 195;
     this.audio.playBossHeavySlam();
     this.spawnShockwave(hero.x, hero.y, 0xc084fc, radius * 1.15);
+    this.kickNearbyWreckage(hero.x, hero.y, radius * 1.2, 360, 0, 0, 290);
     this.screenShake.trigger(8.0, 190);
     this.broadcastFearWave(hero.x, hero.y, 380, 35);
 
@@ -1331,6 +1408,7 @@ export class BrawlScene extends Phaser.Scene {
       hero.heroMods.cycloneRadiusMultiplier;
     this.audio.playCycloneSpin();
     this.spawnShockwave(hero.x, hero.y, 0x22c55e, radius * 1.45);
+    this.kickNearbyWreckage(hero.x, hero.y, radius * 1.15, 290, 0, 0, 235);
     this.debris.spawn('DUST_CLOUD', hero.x, hero.y);
     if (this.textures.exists('combat_vfx')) {
       const s = getPerspectiveScale(hero.y);
@@ -1811,6 +1889,7 @@ export class BrawlScene extends Phaser.Scene {
         query.dirY,
         spec.type,
         damage,
+        hero.powerTier,
       );
 
       if (spec.isHeavy || spec.isFinisher) {
@@ -1925,6 +2004,9 @@ export class BrawlScene extends Phaser.Scene {
         } else {
           this.audio.playStrongWhoosh();
         }
+        if (!hero.isHumanControlled) {
+          hero.showShout('이거나 받아라!', '#fde047', 850);
+        }
       }
       return;
     }
@@ -1933,6 +2015,9 @@ export class BrawlScene extends Phaser.Scene {
     if (nearest && hero.pickUpObject(nearest)) {
       this.audio.playWoodPickup();
       if (nearest.spec.kind === 'table') this.audio.playWoodCreak();
+      if (!hero.isHumanControlled) {
+        hero.showShout('영차!', '#7dd3fc', 650);
+      }
     }
   }
 
@@ -1958,7 +2043,7 @@ export class BrawlScene extends Phaser.Scene {
   private updatePickupPrompts(): void {
     const highlighted = new Set<EnvironmentalObject>();
     for (const h of this.heroes) {
-      if (!h.isHumanControlled || h.isCarrying || h.isDefeated) continue;
+      if (!h.isHumanControlled || h.isCarrying || h.isIncapacitated) continue;
       const near = this.findNearestPickupableFor(h);
       if (near) highlighted.add(near);
     }
@@ -2023,12 +2108,14 @@ export class BrawlScene extends Phaser.Scene {
       onWallHit: (o) => {
         this.audio.playHeavyEnvImpact();
         this.debris.spawn('DUST_CLOUD', o.x, o.y);
+        this.kickNearbyWreckage(o.x, o.y, 90, 210, 0, 0, 175);
         this.screenShake.trigger(3.8, 80);
       },
       onLanded: (o, impactSpeed) => {
         if (impactSpeed > 110) {
           this.audio.playFallThud();
           this.debris.spawn('LANDING_DUST', o.x, o.y);
+          this.kickNearbyWreckage(o.x, o.y, 80, 180, 0, 0, 150);
         }
       },
       onRollTick: () => this.audio.playBarrelRoll(),
@@ -2054,6 +2141,10 @@ export class BrawlScene extends Phaser.Scene {
       if (bandit.coverObject === obj) bandit.onCoverDestroyed(this.coordinator);
     }
     this.broadcastFearWave(obj.x, obj.y, 220, 16);
+
+    // Leave persistent 16-bit broken wreckage scattered on the muddy floor with bounce physics!
+    this.spawnWreckageForObject(obj, dirX, dirY);
+    this.kickNearbyWreckage(obj.x, obj.y, 110, 200, dirX, dirY, 170);
 
     if (obj.spec.kind === 'table') {
       this.audio.playTableShatter();
@@ -2083,6 +2174,78 @@ export class BrawlScene extends Phaser.Scene {
       this.spawnHazard('spilled_food', obj.x, obj.y);
       this.spawnHazard('banana_peel', obj.x + (dirX || 1) * 34, obj.y + (dirY || 0.2) * 20);
       this.screenShake.trigger(3.0, 75, dirX, dirY);
+    }
+  }
+
+  private spawnWreckageForObject(
+    obj: EnvironmentalObject,
+    dirX: number,
+    dirY: number,
+  ): void {
+    if (!this.textures.exists('broken_wreckage')) return;
+    const pieces = getWreckageFramesForKind(obj.spec.kind);
+    const baseAngle = Math.hypot(dirX, dirY) > 0.1 ? Math.atan2(dirY, dirX) : Math.random() * Math.PI * 2;
+
+    pieces.forEach((p, idx) => {
+      const spread = (idx - (pieces.length - 1) / 2) * 0.95 + (Math.random() - 0.5) * 0.55;
+      const ang = baseAngle + spread;
+      const speed = 135 + Math.random() * 145;
+      const vx = Math.cos(ang) * speed;
+      const vy = Math.sin(ang) * speed * PERSPECTIVE_CONFIG.verticalMoveRatio;
+      const vz = 185 + Math.random() * 125;
+      const piece = new BrokenWreckage(
+        this,
+        `wreck_${this.nextWreckageSeq++}`,
+        p.frame,
+        obj.x + Math.cos(ang) * 10,
+        obj.y + Math.sin(ang) * 6,
+        vx,
+        vy,
+        vz,
+        p.scale,
+      );
+      this.wreckages.push(piece);
+    });
+
+    // Cap total floor wreckage smoothly by fading out oldest pieces
+    let activeCount = this.wreckages.length;
+    for (let i = 0; i < this.wreckages.length && activeCount > this.MAX_WRECKAGES; i++) {
+      this.wreckages[i].startFadeOut();
+      activeCount -= 1;
+    }
+  }
+
+  private kickNearbyWreckage(
+    originX: number,
+    originY: number,
+    radius: number,
+    force: number,
+    dirX = 0,
+    dirY = 0,
+    liftVz = 185,
+  ): void {
+    if (this.wreckages.length === 0) return;
+    const rSq = radius * radius;
+    let kickedAny = false;
+    const hasDir = Math.hypot(dirX, dirY) > 0.1;
+
+    for (const w of this.wreckages) {
+      const dx = w.x - originX;
+      const dy = (w.y - originY) / PERSPECTIVE_CONFIG.verticalMoveRatio;
+      const dSq = dx * dx + dy * dy;
+      if (dSq > rSq) continue;
+
+      const d = Math.sqrt(dSq) || 1;
+      const falloff = Math.max(0.45, 1 - d / (radius * 1.15));
+      const kx = hasDir ? dirX * 0.65 + (dx / d) * 0.35 : dx / d;
+      const ky = hasDir ? dirY * 0.65 + (dy / d) * 0.35 : dy / d;
+      if (w.applyImpulse(kx, ky, force * falloff, liftVz * falloff)) {
+        kickedAny = true;
+      }
+    }
+
+    if (kickedAny) {
+      this.audio.playWreckageKick();
     }
   }
 
@@ -2166,12 +2329,24 @@ export class BrawlScene extends Phaser.Scene {
         onAttackWhoosh: () => this.audio.playEnemyWhoosh(),
         onHitPlayer: (damage, dirX, dirY) => {
           const victim = this.findNearestAliveHero(bandit.x, bandit.y);
-          victim?.takeDamage(damage, dirX, dirY);
+          if (!victim) return;
+          if (bandit.archetype === 'elite') {
+            victim.takeDamage(damage, dirX, dirY, {
+              heavy: true,
+              causesDizzy: Math.random() < 0.32,
+              knockdownForce: 270,
+              launchVz: 225,
+              dizzyDurationMs: 1650,
+            });
+          } else {
+            victim.takeDamage(damage, dirX, dirY);
+          }
         },
         onLanded: (b, impactSpeed) => {
           const strong = impactSpeed > 150;
           this.audio.playKnockdownLanding();
           this.vfx.spawnLandingImpact(b.x, b.y, strong);
+          this.kickNearbyWreckage(b.x, b.y, 78, strong ? 225 : 125, 0, 0, strong ? 190 : 120);
           if (strong) this.screenShake.trigger(3.0, 70, 0, 1);
         },
         onDefeated: (b) => {
@@ -2426,6 +2601,11 @@ export class BrawlScene extends Phaser.Scene {
     this.envObjects.length = 0;
   }
 
+  private clearAllWreckages(): void {
+    for (const w of this.wreckages) w.destroy();
+    this.wreckages.length = 0;
+  }
+
   private clearAllHazards(): void {
     for (const hz of this.hazards) hz.destroy();
     this.hazards.length = 0;
@@ -2433,6 +2613,7 @@ export class BrawlScene extends Phaser.Scene {
 
   private resetEnvironmentObjects(): void {
     this.clearAllObjects();
+    this.clearAllWreckages();
     this.clearAllHazards();
     this.debris.clearAll();
     this.spawnInitialEnvironment();
@@ -2541,6 +2722,7 @@ export class BrawlScene extends Phaser.Scene {
     this.clearBoss();
     this.clearTreasurePickups();
     this.clearAllObjects();
+    this.clearAllWreckages();
     this.clearAllHazards();
     this.arena?.destroy();
     this.debugVisGfx?.destroy();

@@ -13,6 +13,7 @@ export interface HeroActionInput {
   heavyAttackPressed: boolean;
   specialPressed: boolean;
   interactPressed: boolean;
+  guardHeld?: boolean;
 }
 
 export function createEmptyHeroInput(): HeroActionInput {
@@ -24,6 +25,7 @@ export function createEmptyHeroInput(): HeroActionInput {
     heavyAttackPressed: false,
     specialPressed: false,
     interactPressed: false,
+    guardHeld: false,
   };
 }
 
@@ -130,6 +132,7 @@ export class MultiInputManager implements IGameSystem {
         heavyAttackPressed: keyboardSample.heavyAttackPressed,
         specialPressed: keyboardSample.specialPressed,
         interactPressed: keyboardSample.interactPressed,
+        guardHeld: keyboardSample.guardHeld,
       };
     }
 
@@ -181,6 +184,7 @@ export class MultiInputManager implements IGameSystem {
       heavyAttackPressed: justPressed(1), // B
       specialPressed: justPressed(3) || justPressed(5), // Y or RB
       interactPressed: justPressed(4), // LB
+      guardHeld: Boolean(curButtons[6] || curButtons[7]), // LT or RT
     };
   }
 

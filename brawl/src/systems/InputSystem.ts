@@ -16,6 +16,8 @@ export interface MoveInputState {
   interactPressed: boolean;
   /** True on the frame Special Ability (V) was pressed */
   specialPressed: boolean;
+  /** True while Guard (C or Shift) is held */
+  guardHeld: boolean;
   /** True on the frame Switch Hero (TAB) was pressed */
   switchHeroPressed: boolean;
   /** True on the frame Party Setup (P) was pressed */
@@ -29,8 +31,8 @@ export interface MoveInputState {
 }
 
 /**
- * Handles smooth 8-direction movement (WASD + Arrows) and responsive combat/mayhem/special inputs
- * (Z, X, V, SPACE, TAB, P, F2, F3, R).
+ * Handles smooth 8-direction movement (WASD + Arrows) and responsive combat/mayhem/special/guard inputs
+ * (Z, X, C/Shift, V, SPACE, TAB, P, F2, F3, R).
  */
 export class InputSystem implements IGameSystem {
   public readonly id = 'input';
@@ -46,6 +48,8 @@ export class InputSystem implements IGameSystem {
     right: Phaser.Input.Keyboard.Key;
     z: Phaser.Input.Keyboard.Key;
     x: Phaser.Input.Keyboard.Key;
+    c: Phaser.Input.Keyboard.Key;
+    shift: Phaser.Input.Keyboard.Key;
     v: Phaser.Input.Keyboard.Key;
     space: Phaser.Input.Keyboard.Key;
     tab: Phaser.Input.Keyboard.Key;
@@ -73,6 +77,8 @@ export class InputSystem implements IGameSystem {
       right: kb.addKey(Phaser.Input.Keyboard.KeyCodes.RIGHT),
       z: kb.addKey(Phaser.Input.Keyboard.KeyCodes.Z),
       x: kb.addKey(Phaser.Input.Keyboard.KeyCodes.X),
+      c: kb.addKey(Phaser.Input.Keyboard.KeyCodes.C),
+      shift: kb.addKey(Phaser.Input.Keyboard.KeyCodes.SHIFT),
       v: kb.addKey(Phaser.Input.Keyboard.KeyCodes.V),
       space: kb.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE),
       tab: kb.addKey(Phaser.Input.Keyboard.KeyCodes.TAB),
@@ -93,6 +99,7 @@ export class InputSystem implements IGameSystem {
         heavyAttackPressed: false,
         interactPressed: false,
         specialPressed: false,
+        guardHeld: false,
         switchHeroPressed: false,
         partySetupPressed: false,
         toggleCombatPanelPressed: false,
@@ -121,6 +128,7 @@ export class InputSystem implements IGameSystem {
       heavyAttackPressed: Phaser.Input.Keyboard.JustDown(this.keys.x),
       interactPressed: Phaser.Input.Keyboard.JustDown(this.keys.space),
       specialPressed: Phaser.Input.Keyboard.JustDown(this.keys.v),
+      guardHeld: this.keys.c.isDown || this.keys.shift.isDown,
       switchHeroPressed: Phaser.Input.Keyboard.JustDown(this.keys.tab),
       partySetupPressed: Phaser.Input.Keyboard.JustDown(this.keys.p),
       toggleCombatPanelPressed: Phaser.Input.Keyboard.JustDown(this.keys.f2),

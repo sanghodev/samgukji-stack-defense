@@ -71,16 +71,18 @@ export class ImpactVfxSystem implements IGameSystem {
     attackType: AttackType,
     range: number,
     heroId: HeroId = 'zhaoyun',
+    powerTier = 0,
   ): void {
     if (!this.scene) return;
     const pal = HERO_TRAIL_PALETTES[heroId] ?? HERO_TRAIL_PALETTES.zhaoyun;
-    const scale = getPerspectiveScale(y);
+    const tierScale = 1 + Math.min(3, Math.max(0, powerTier)) * 0.14;
+    const scale = getPerspectiveScale(y) * tierScale;
     const angle = Math.atan2(dirY, dirX);
     const g = this.scene.add.graphics();
-    g.setPosition(x, y - 24 * scale);
+    g.setPosition(x, y - 24 * getPerspectiveScale(y));
     g.setDepth(getDepthOrder(y) + 25);
 
-    const visualRange = range * scale;
+    const visualRange = range * getPerspectiveScale(y) * (1 + Math.min(3, powerTier) * 0.06);
 
     if (attackType === 'HEAVY') {
       const ex = Math.cos(angle) * visualRange * 1.05;
@@ -153,6 +155,15 @@ export class ImpactVfxSystem implements IGameSystem {
       g.strokePath();
     }
 
+    // Tier 2+ Treasure Power-Up: extra golden outer energy arc!
+    if (powerTier >= 2) {
+      const radius = visualRange * 0.88;
+      g.lineStyle(3.5 * scale, 0xfde047, 0.82);
+      g.beginPath();
+      g.arc(0, 0, radius, angle - 0.9, angle + 0.9, false);
+      g.strokePath();
+    }
+
     const hasComicVfx = this.scene.textures.exists('combat_vfx');
     if (hasComicVfx) {
       if (heroId === 'guanyu') {
@@ -191,7 +202,7 @@ export class ImpactVfxSystem implements IGameSystem {
           ease: 'Quad.easeOut',
           onComplete: () => thrust.destroy(),
         });
-      } else if (heroId === 'zhangfei' && (attackType === 'HEAVY' || attackType === 'LIGHT_3')) {
+      } else if (heroId === 'zhangfei' && (attackType === 'HEAVY' || attackType === 'LIGHT_3' || powerTier >= 2)) {
         const flame = this.scene.add
           .image(x + dirX * 34 * scale, y - 26 * scale + dirY * 16 * scale, 'combat_vfx', 2)
           .setOrigin(0.5)
@@ -235,10 +246,11 @@ export class ImpactVfxSystem implements IGameSystem {
     dirY: number,
     attackType: AttackType,
     damage: number,
+    powerTier = 0,
   ): void {
     if (!this.scene) return;
-    const scale = getPerspectiveScale(y);
-    const impactY = y - (26 + elevationZ) * scale;
+    const scale = getPerspectiveScale(y) * (1 + Math.min(3, Math.max(0, powerTier)) * 0.08);
+    const impactY = y - (26 + elevationZ) * getPerspectiveScale(y);
     const depth = getDepthOrder(y) + 40;
 
     // 1. Crisp 16-bit comic yellow-white jagged starburst (matching image.png!)
@@ -478,6 +490,89 @@ export class ImpactVfxSystem implements IGameSystem {
       duration: 140,
       onComplete: () => flash.destroy(),
     });
+  }
+
+  /**
+   * Bright golden-cyan shock ring + spark fan when a Hero cleanly blocks an enemy hit!
+   */
+  public spawnGuardBlockVfx(x: number, y: number): void {
+    if (!this.scene) return;
+    const scale = getPerspectiveScale(y);
+    const cy = y - 34 * scale;
+    const depth = getDepthOrder(y) + 42;
+
+    const ring = this.scene.add.graphics().setPosition(x, cy).setDepth(depth);
+    ring.lineStyle(5 * scale, 0x7dd3fc, 0.95);
+    ring.strokeCircle(0, 0, 28 * scale);
+    ring.lineStyle(2.5 * scale, 0xfef08a, 1);
+    ring.strokeCircle(0, 0, 20 * scale);
+    this.scene.tweens.add({
+      targets: ring,
+      scale: 1.75,
+      alpha: 0,
+      duration: 210,
+      ease: 'Quad.easeOut',
+      onComplete: () => ring.destroy(),
+    });
+
+    for (let i = 0; i < 8; i++) {
+      const ang = (i / 8) * Math.PI * 2 + (Math.random() - 0.5) * 0.35;
+      const spd = (170 + Math.random() * 90) * scale;
+      this.acquireParticle(this.sparkPool, {
+        x,
+        y: cy,
+        vx: Math.cos(ang) * spd,
+        vy: Math.sin(ang) * spd * 0.65,
+        vz: 70 + Math.random() * 90,
+        lifeMs: 220,
+        startScale: 1.2 * scale,
+        endScale: 0.2 * scale,
+        depth: depth + 1,
+        tint: i % 2 === 0 ? 0xfef08a : 0x7dd3fc,
+        gravity: 420,
+      });
+    }
+  }
+
+  /**
+   * Dramatic rising golden-elemental pillar & star shower when a Hero gains a treasure power-up!
+   */
+  public spawnPowerUpVfx(x: number, y: number, accentHex: number): void {
+    if (!this.scene) return;
+    const scale = getPerspectiveScale(y);
+    const depth = getDepthOrder(y) + 38;
+
+    const pillar = this.scene.add.graphics().setPosition(x, y).setDepth(depth - 2);
+    pillar.fillStyle(accentHex, 0.28);
+    pillar.fillRect(-26 * scale, -135 * scale, 52 * scale, 138 * scale);
+    pillar.fillStyle(0xfef08a, 0.36);
+    pillar.fillRect(-12 * scale, -150 * scale, 24 * scale, 152 * scale);
+    this.scene.tweens.add({
+      targets: pillar,
+      scaleX: 1.65,
+      alpha: 0,
+      duration: 480,
+      ease: 'Cubic.easeOut',
+      onComplete: () => pillar.destroy(),
+    });
+
+    for (let i = 0; i < 14; i++) {
+      const ang = (i / 14) * Math.PI * 2;
+      const rad = (14 + Math.random() * 24) * scale;
+      this.acquireParticle(this.sparkPool, {
+        x: x + Math.cos(ang) * rad,
+        y: y - 10 * scale + Math.sin(ang) * rad * 0.4,
+        vx: Math.cos(ang) * 55 * scale,
+        vy: Math.sin(ang) * 20 * scale,
+        vz: 185 + Math.random() * 145,
+        lifeMs: 460 + Math.random() * 180,
+        startScale: 1.35 * scale,
+        endScale: 0.25 * scale,
+        depth: depth + 2,
+        tint: i % 2 === 0 ? 0xfde047 : accentHex,
+        gravity: 120,
+      });
+    }
   }
 
   private spawnDustBurst(

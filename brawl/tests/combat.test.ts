@@ -660,6 +660,76 @@ test('Impact Reaction Profiles scale bounce, squash, and tumble monotonically fr
   assert.ok(IMPACT_REACTION_PROFILES.LIGHT.tumbleSpinMul < IMPACT_REACTION_PROFILES.EXTREME.tumbleSpinMul);
 });
 
+// ==================== HERO GUARD, KNOCKDOWN, DIZZY, POWER-UP & WRECKAGE TESTS ====================
+import {
+  getHeroSpecialPoseFrames,
+  getPowerUpVisualTier,
+  getWreckageFramesForKind,
+  resolveHeroIncomingHit,
+} from '../src/core/HeroDefenseMath.ts';
+
+test('Guarding blocks 75% damage, prevents knockdown/dizzy, and preserves player combo', () => {
+  const res = resolveHeroIncomingHit({
+    baseDamage: 28,
+    isGuarding: true,
+    isInvulnerable: false,
+    isSuperArmored: false,
+    isDefeated: false,
+    consecutiveHits: 3,
+    opts: { heavy: true, causesDizzy: true, dizzyDurationMs: 2200 },
+  });
+  assert.equal(res.outcome, 'GUARDED');
+  assert.equal(res.finalDamage, 7);
+  assert.equal(res.launchVz, 0);
+  assert.equal(res.dizzyMs, 0);
+  assert.equal(res.resetComboCounter, false);
+});
+
+test('Unguarded Boss Slam inflicts DIZZY launch and 3rd consecutive normal hit causes KNOCKDOWN', () => {
+  const bossSlam = resolveHeroIncomingHit({
+    baseDamage: 24,
+    isGuarding: false,
+    isInvulnerable: false,
+    isSuperArmored: false,
+    isDefeated: false,
+    consecutiveHits: 1,
+    opts: { heavy: true, causesDizzy: true, launchVz: 270, dizzyDurationMs: 2100 },
+  });
+  assert.equal(bossSlam.outcome, 'DIZZY');
+  assert.equal(bossSlam.finalDamage, 24);
+  assert.equal(bossSlam.launchVz, 270);
+  assert.equal(bossSlam.dizzyMs, 2100);
+
+  const thirdHit = resolveHeroIncomingHit({
+    baseDamage: 10,
+    isGuarding: false,
+    isInvulnerable: false,
+    isSuperArmored: false,
+    isDefeated: false,
+    consecutiveHits: 3,
+  });
+  assert.equal(thirdHit.outcome, 'KNOCKDOWN');
+  assert.ok(thirdHit.launchVz > 200);
+});
+
+test('Treasure Power-Up visual tiers, special pose frames, and wreckage frame mappings are well-defined', () => {
+  assert.equal(getPowerUpVisualTier(0), 0);
+  assert.equal(getPowerUpVisualTier(1), 1);
+  assert.equal(getPowerUpVisualTier(3), 2);
+  assert.equal(getPowerUpVisualTier(5), 3);
+
+  assert.deepEqual(getHeroSpecialPoseFrames('zhaoyun'), { carryFrame: 0, koFrame: 4 });
+  assert.deepEqual(getHeroSpecialPoseFrames('guanyu'), { carryFrame: 1, koFrame: 5 });
+  assert.deepEqual(getHeroSpecialPoseFrames('zhangfei'), { carryFrame: 2, koFrame: 6 });
+  assert.deepEqual(getHeroSpecialPoseFrames('huangzhong'), { carryFrame: 3, koFrame: 7 });
+
+  assert.equal(getWreckageFramesForKind('table').length, 3);
+  assert.equal(getWreckageFramesForKind('ceramic_jar').length, 2);
+  assert.equal(getWreckageFramesForKind('barrel_water')[0].frame, 2);
+  assert.equal(getWreckageFramesForKind('fruit_basket', () => 0.2)[0].frame, 5);
+  assert.equal(getWreckageFramesForKind('fruit_basket', () => 0.8)[0].frame, 6);
+});
+
 
 
 
