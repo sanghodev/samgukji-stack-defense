@@ -133,7 +133,7 @@ export class BrawlScene extends Phaser.Scene {
   private nextHazardSeq = 1;
   private nextProjectileSeq = 1;
   private nextTreasureSeq = 1;
-  private readonly MAX_WRECKAGES = 36;
+  private readonly MAX_WRECKAGES = 72;
 
   private enemiesDefeated = 0;
   private comboHits = 0;
@@ -734,7 +734,7 @@ export class BrawlScene extends Phaser.Scene {
       const wave = STAGE_1_WAVES[res.refreshEnvWaveIndex];
       if (wave?.envRefreshProps) {
         for (const p of wave.envRefreshProps) {
-          if (this.envObjects.length < 18) {
+          if (this.envObjects.length < 56) {
             this.spawnObject(p.kind, p.x, p.y);
           }
         }
@@ -2087,19 +2087,74 @@ export class BrawlScene extends Phaser.Scene {
   }
 
   private spawnInitialEnvironment(): void {
-    this.spawnObject('table', 485, 482);
-    this.spawnObject('table', 815, 488);
-    this.spawnObject('table', 640, 326);
-    this.spawnObject('barrel_water', 425, 368);
-    this.spawnObject('barrel_water', 855, 374);
-    this.spawnObject('barrel_empty', 310, 566);
-    this.spawnObject('ceramic_jar', 575, 272);
-    this.spawnObject('ceramic_jar', 705, 272);
-    this.spawnObject('ceramic_jar', 278, 628);
-    this.spawnObject('ceramic_jar', 996, 456);
-    this.spawnObject('fruit_basket', 392, 608);
-    this.spawnObject('fruit_basket', 918, 606);
+    // Rear courtyard (near fortress gate, tents & palisades)
+    const rearProps: Array<[EnvObjectKind, number, number]> = [
+      ['ceramic_jar', 410, 248],
+      ['barrel_empty', 465, 255],
+      ['table', 540, 265],
+      ['ceramic_jar', 610, 252],
+      ['ceramic_jar', 705, 254],
+      ['barrel_water', 775, 262],
+      ['table', 855, 268],
+      ['ceramic_jar', 940, 256],
+      ['barrel_empty', 995, 266],
+      ['fruit_basket', 495, 295],
+      ['fruit_basket', 795, 295],
+    ];
+
+    // Mid-courtyard (main tavern & market stalls)
+    const midProps: Array<[EnvObjectKind, number, number]> = [
+      ['barrel_water', 295, 345],
+      ['ceramic_jar', 355, 355],
+      ['table', 430, 365],
+      ['fruit_basket', 505, 355],
+      ['table', 640, 338],
+      ['ceramic_jar', 745, 352],
+      ['table', 845, 368],
+      ['barrel_water', 925, 358],
+      ['barrel_empty', 1005, 365],
+      ['ceramic_jar', 1075, 350],
+
+      ['barrel_empty', 225, 430],
+      ['fruit_basket', 310, 445],
+      ['table', 475, 465],
+      ['ceramic_jar', 555, 445],
+      ['barrel_water', 735, 450],
+      ['table', 825, 468],
+      ['fruit_basket', 945, 448],
+      ['ceramic_jar', 1045, 455],
+      ['barrel_empty', 1125, 435],
+    ];
+
+    // Foreground plaza (large close-up interactive clutter)
+    const frontProps: Array<[EnvObjectKind, number, number]> = [
+      ['barrel_water', 185, 545],
+      ['table', 285, 560],
+      ['ceramic_jar', 370, 555],
+      ['fruit_basket', 445, 585],
+      ['barrel_empty', 575, 595],
+      ['table', 675, 580],
+      ['ceramic_jar', 765, 590],
+      ['fruit_basket', 865, 575],
+      ['table', 965, 565],
+      ['barrel_water', 1075, 550],
+
+      ['ceramic_jar', 235, 635],
+      ['fruit_basket', 355, 645],
+      ['barrel_empty', 485, 640],
+      ['ceramic_jar', 615, 648],
+      ['fruit_basket', 745, 642],
+      ['barrel_empty', 875, 645],
+      ['ceramic_jar', 1005, 635],
+    ];
+
+    for (const [kind, x, y] of [...rearProps, ...midProps, ...frontProps]) {
+      this.spawnObject(kind, x, y);
+    }
+
     this.spawnHazard('water_puddle', 640, 412);
+    this.spawnHazard('water_puddle', 340, 325);
+    this.spawnHazard('water_puddle', 960, 515);
   }
 
   private spawnObject(kind: EnvObjectKind, x: number, y: number): EnvironmentalObject {

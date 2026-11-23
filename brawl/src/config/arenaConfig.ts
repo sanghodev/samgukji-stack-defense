@@ -28,12 +28,12 @@ export const ARENA_BOUNDS = {
  */
 export const PERSPECTIVE_CONFIG = {
   /** Character scale at the far rear near the castle gate (backY) */
-  minScale: 0.42,
+  minScale: 0.36,
   /** Character scale at the foreground closest to the viewer (frontY) */
-  maxScale: 1.66,
+  maxScale: 1.88,
   /** Screen-space movement speed multiplier at back vs front */
-  minSpeedFactor: 0.48,
-  maxSpeedFactor: 1.24,
+  minSpeedFactor: 0.44,
+  maxSpeedFactor: 1.32,
   /** Foreshortening ratio for depth (up/down) movement relative to horizontal */
   verticalMoveRatio: 0.68,
 } as const;

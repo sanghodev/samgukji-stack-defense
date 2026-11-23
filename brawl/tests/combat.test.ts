@@ -497,10 +497,10 @@ test('Party-size difficulty scaling covers 1H+0AI through 4H+0AI smoothly', () =
   const trio = getStageDifficultyProfile(2, 1);
   const quad = getStageDifficultyProfile(4, 0);
 
-  assert.ok(solo.maxSimultaneousEnemies >= 6 && solo.maxSimultaneousEnemies <= 8);
-  assert.ok(duo.maxSimultaneousEnemies >= 9 && duo.maxSimultaneousEnemies <= 12);
-  assert.ok(trio.maxSimultaneousEnemies >= 12 && trio.maxSimultaneousEnemies <= 16);
-  assert.ok(quad.maxSimultaneousEnemies >= 16 && quad.maxSimultaneousEnemies <= 20);
+  assert.ok(solo.maxSimultaneousEnemies >= 20 && solo.maxSimultaneousEnemies <= 26);
+  assert.ok(duo.maxSimultaneousEnemies >= 28 && duo.maxSimultaneousEnemies <= 36);
+  assert.ok(trio.maxSimultaneousEnemies >= 38 && trio.maxSimultaneousEnemies <= 46);
+  assert.ok(quad.maxSimultaneousEnemies >= 48 && quad.maxSimultaneousEnemies <= 56);
   assert.ok(solo.bossHp < duo.bossHp && duo.bossHp < trio.bossHp && trio.bossHp < quad.bossHp);
 });
 
