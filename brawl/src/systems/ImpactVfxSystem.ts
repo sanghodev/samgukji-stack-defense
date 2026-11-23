@@ -674,6 +674,393 @@ export class ImpactVfxSystem implements IGameSystem {
     this.spawnDustBurst(x, y + 2, 0, 1, 6, scale);
   }
 
+  /**
+   * Brief dramatic arcade spotlight + radial speed lines ("짜잔!") when a hero unleashes
+   * their Skill 3 Emergency Escape Ultimate!
+   */
+  public spawnUltimateDramaticFlash(heroX: number, heroY: number, accentHex: number): void {
+    if (!this.scene) return;
+    const scale = getPerspectiveScale(heroY);
+
+    // Brief dramatic vignette dim behind the hero's elemental burst
+    const dim = this.scene.add
+      .rectangle(640, 360, 1280, 720, 0x050814, 0.42)
+      .setDepth(getDepthOrder(heroY) - 6);
+    this.scene.tweens.add({
+      targets: dim,
+      alpha: 0,
+      duration: 520,
+      ease: 'Quad.easeOut',
+      onComplete: () => dim.destroy(),
+    });
+
+    // Radiant sky-to-ground hero spotlight pillar + expanding golden ring
+    const beam = this.scene.add
+      .graphics()
+      .setPosition(heroX, heroY)
+      .setDepth(getDepthOrder(heroY) - 4);
+    beam.fillStyle(accentHex, 0.34);
+    beam.fillRect(-52 * scale, -440, 104 * scale, 455);
+    beam.fillStyle(0xffffff, 0.44);
+    beam.fillRect(-20 * scale, -440, 40 * scale, 455);
+
+    // Radial arcade burst lines around hero
+    for (let i = 0; i < 12; i++) {
+      const a = (i / 12) * Math.PI * 2;
+      beam.lineStyle(4 * scale, i % 2 === 0 ? 0xfef08a : accentHex, 0.85);
+      beam.lineBetween(
+        Math.cos(a) * 32 * scale,
+        -32 * scale + Math.sin(a) * 20 * scale,
+        Math.cos(a) * 165 * scale,
+        -32 * scale + Math.sin(a) * 105 * scale,
+      );
+    }
+
+    this.scene.tweens.add({
+      targets: beam,
+      scaleX: 1.55,
+      alpha: 0,
+      duration: 460,
+      ease: 'Cubic.easeOut',
+      onComplete: () => beam.destroy(),
+    });
+  }
+
+  /**
+   * Zhao Yun — Water / Tidal Ice Dragon Wave & Celestial Water Tempest VFX!
+   */
+  public spawnWaterDragonWave(
+    x: number,
+    y: number,
+    dirX: number,
+    dirY: number,
+    isUltimate = false,
+  ): void {
+    if (!this.scene) return;
+    const scale = getPerspectiveScale(y);
+    const depth = getDepthOrder(y) + 28;
+
+    if (isUltimate) {
+      // Swirling 360° cyan-sapphire water-dragon vortex + crashing wave rings!
+      for (let r = 0; r < 3; r++) {
+        const ring = this.scene.add.graphics().setPosition(x, y - 16 * scale).setDepth(depth + r);
+        const rad = (78 + r * 52) * scale;
+        ring.lineStyle((12 - r * 2) * scale, r === 0 ? 0x0284c7 : r === 1 ? 0x38bdf8 : 0xe0f2fe, 0.92);
+        ring.strokeEllipse(0, 0, rad * 2.1, rad * 1.25);
+        ring.fillStyle(0x38bdf8, 0.16);
+        ring.fillEllipse(0, 0, rad * 1.9, rad * 1.12);
+        this.scene.tweens.add({
+          targets: ring,
+          scaleX: 1.65,
+          scaleY: 1.65,
+          y: ring.y - (26 + r * 14) * scale,
+          alpha: 0,
+          duration: 480 + r * 95,
+          ease: 'Cubic.easeOut',
+          onComplete: () => ring.destroy(),
+        });
+      }
+      // Tall spiraling water-dragon columns around Zhao Yun
+      for (let i = 0; i < 6; i++) {
+        const ang = (i / 6) * Math.PI * 2;
+        const px = x + Math.cos(ang) * 95 * scale;
+        const py = y + Math.sin(ang) * 55 * scale;
+        this.spawnWaterColumn(px, py, 1.15);
+      }
+    } else {
+      // Surging directional tidal wave crests rushing forward!
+      const angle = Math.atan2(dirY, dirX);
+      for (let step = 0; step < 3; step++) {
+        const dist = (55 + step * 68) * scale;
+        const wx = x + dirX * dist;
+        const wy = y + dirY * dist * 0.68;
+        this.scene.time.delayedCall(step * 65, () => {
+          if (!this.scene) return;
+          const g = this.scene.add.graphics().setPosition(wx, wy - 14 * scale).setDepth(getDepthOrder(wy) + 26);
+          const rad = (54 + step * 14) * scale;
+          g.lineStyle(14 * scale, 0x0284c7, 0.72);
+          g.beginPath();
+          g.arc(0, 0, rad, angle - 1.15, angle + 1.15, false);
+          g.strokePath();
+          g.lineStyle(7 * scale, 0x38bdf8, 0.96);
+          g.beginPath();
+          g.arc(0, 0, rad * 0.94, angle - 1.05, angle + 1.05, false);
+          g.strokePath();
+          g.lineStyle(3 * scale, 0xf0f9ff, 1);
+          g.beginPath();
+          g.arc(0, 0, rad * 0.88, angle - 0.88, angle + 0.88, false);
+          g.strokePath();
+
+          this.scene.tweens.add({
+            targets: g,
+            x: g.x + dirX * 42 * scale,
+            y: g.y + dirY * 26 * scale,
+            scaleX: 1.32,
+            scaleY: 1.32,
+            alpha: 0,
+            duration: 320,
+            ease: 'Quad.easeOut',
+            onComplete: () => g.destroy(),
+          });
+          this.spawnWaterColumn(wx, wy, 0.8);
+        });
+      }
+    }
+  }
+
+  private spawnWaterColumn(x: number, y: number, mul = 1.0): void {
+    if (!this.scene) return;
+    const scale = getPerspectiveScale(y) * mul;
+    const depth = getDepthOrder(y) + 24;
+    const col = this.scene.add.graphics().setPosition(x, y).setDepth(depth);
+    col.fillStyle(0x0284c7, 0.52);
+    col.fillRoundedRect(-22 * scale, -118 * scale, 44 * scale, 120 * scale, 16 * scale);
+    col.fillStyle(0x7dd3fc, 0.78);
+    col.fillRoundedRect(-11 * scale, -132 * scale, 22 * scale, 134 * scale, 10 * scale);
+    col.fillStyle(0xf0f9ff, 0.92);
+    col.fillEllipse(0, -126 * scale, 38 * scale, 14 * scale);
+
+    this.scene.tweens.add({
+      targets: col,
+      scaleY: 1.28,
+      scaleX: 1.35,
+      alpha: 0,
+      duration: 400,
+      ease: 'Cubic.easeOut',
+      onComplete: () => col.destroy(),
+    });
+
+    for (let i = 0; i < 6; i++) {
+      const ang = Math.random() * Math.PI * 2;
+      const spd = (95 + Math.random() * 110) * scale;
+      this.acquireParticle(this.sparkPool, {
+        x,
+        y: y - 24 * scale,
+        vx: Math.cos(ang) * spd,
+        vy: Math.sin(ang) * spd * 0.5,
+        vz: 140 + Math.random() * 140,
+        lifeMs: 320,
+        startScale: 1.2 * scale,
+        endScale: 0.25 * scale,
+        depth: depth + 2,
+        tint: i % 2 === 0 ? 0x38bdf8 : 0xf0f9ff,
+        gravity: 480,
+      });
+    }
+  }
+
+  /**
+   * Guan Yu — Azure Dragon Sky Lightning Bolt & Thunder God Storm VFX!
+   */
+  public spawnThunderStrikeBolt(x: number, y: number, isUltimate = false): void {
+    if (!this.scene) return;
+    const scale = getPerspectiveScale(y);
+    const depth = getDepthOrder(y) + 34;
+
+    const bolt = this.scene.add.graphics().setDepth(depth);
+    const startY = Math.max(0, y - (isUltimate ? 440 : 340));
+    const segments = 7;
+    const pts: Array<{ x: number; y: number }> = [{ x: x + Phaser.Math.Between(-24, 24), y: startY }];
+    for (let i = 1; i < segments; i++) {
+      const t = i / segments;
+      pts.push({
+        x: x + (i % 2 === 0 ? 1 : -1) * Phaser.Math.Between(12, 28) * scale,
+        y: Phaser.Math.Linear(startY, y, t),
+      });
+    }
+    pts.push({ x, y });
+
+    // Outer emerald-cyan glow, middle gold bolt, white core!
+    const drawBolt = (width: number, color: number, alpha: number) => {
+      bolt.lineStyle(width * scale, color, alpha);
+      bolt.beginPath();
+      bolt.moveTo(pts[0].x, pts[0].y);
+      for (let i = 1; i < pts.length; i++) bolt.lineTo(pts[i].x, pts[i].y);
+      bolt.strokePath();
+    };
+    drawBolt(isUltimate ? 24 : 17, 0x22c55e, 0.45);
+    drawBolt(isUltimate ? 13 : 9, 0xfde047, 0.94);
+    drawBolt(isUltimate ? 5 : 4, 0xffffff, 1.0);
+
+    // Ground electrified shockwave ring
+    bolt.fillStyle(0xfef08a, 0.32);
+    bolt.fillEllipse(x, y, (isUltimate ? 115 : 82) * scale, (isUltimate ? 66 : 48) * scale);
+    bolt.lineStyle(4 * scale, 0x4ade80, 0.95);
+    bolt.strokeEllipse(x, y, (isUltimate ? 128 : 92) * scale, (isUltimate ? 74 : 52) * scale);
+
+    this.scene.tweens.add({
+      targets: bolt,
+      alpha: 0,
+      duration: isUltimate ? 340 : 250,
+      ease: 'Quad.easeOut',
+      onComplete: () => bolt.destroy(),
+    });
+
+    for (let i = 0; i < (isUltimate ? 10 : 6); i++) {
+      const ang = (i / (isUltimate ? 10 : 6)) * Math.PI * 2;
+      const spd = (140 + Math.random() * 130) * scale;
+      this.acquireParticle(this.sparkPool, {
+        x,
+        y: y - 10 * scale,
+        vx: Math.cos(ang) * spd,
+        vy: Math.sin(ang) * spd * 0.55,
+        vz: 110 + Math.random() * 130,
+        lifeMs: 280,
+        startScale: 1.3 * scale,
+        endScale: 0.2 * scale,
+        depth: depth + 2,
+        tint: i % 2 === 0 ? 0xfde047 : 0x4ade80,
+        gravity: 420,
+      });
+    }
+  }
+
+  /**
+   * Zhang Fei — Blazing Flame Pillar Ring & Volcano Inferno Eruption VFX!
+   */
+  public spawnInfernoFirePillars(x: number, y: number, radius: number, isUltimate = false): void {
+    if (!this.scene) return;
+    const scale = getPerspectiveScale(y);
+    const depth = getDepthOrder(y) + 30;
+
+    // Ground lava blast ring
+    const ring = this.scene.add.graphics().setPosition(x, y).setDepth(depth - 1);
+    ring.fillStyle(0xdc2626, isUltimate ? 0.34 : 0.24);
+    ring.fillEllipse(0, 0, radius * 2.0 * scale, radius * 1.2 * scale);
+    ring.lineStyle((isUltimate ? 10 : 7) * scale, 0xf97316, 0.95);
+    ring.strokeEllipse(0, 0, radius * 2.0 * scale, radius * 1.2 * scale);
+    ring.lineStyle(4 * scale, 0xfef08a, 1);
+    ring.strokeEllipse(0, 0, radius * 1.55 * scale, radius * 0.92 * scale);
+    this.scene.tweens.add({
+      targets: ring,
+      scaleX: 1.4,
+      scaleY: 1.4,
+      alpha: 0,
+      duration: isUltimate ? 480 : 340,
+      ease: 'Cubic.easeOut',
+      onComplete: () => ring.destroy(),
+    });
+
+    const pillarCount = isUltimate ? 8 : 5;
+    for (let i = 0; i < pillarCount; i++) {
+      const ang = (i / pillarCount) * Math.PI * 2;
+      const dist = (isUltimate ? radius * 0.62 : radius * 0.55) * scale;
+      const px = x + Math.cos(ang) * dist;
+      const py = y + Math.sin(ang) * dist * 0.62;
+      const h = (isUltimate ? 180 : 125) * scale;
+      const w = (isUltimate ? 54 : 38) * scale;
+
+      const flame = this.scene.add.graphics().setPosition(px, py).setDepth(getDepthOrder(py) + 28);
+      flame.fillStyle(0xdc2626, 0.62);
+      flame.fillRoundedRect(-w * 0.5, -h, w, h + 6, w * 0.4);
+      flame.fillStyle(0xf97316, 0.85);
+      flame.fillRoundedRect(-w * 0.34, -h * 0.9, w * 0.68, h * 0.92, w * 0.3);
+      flame.fillStyle(0xfef08a, 0.96);
+      flame.fillRoundedRect(-w * 0.16, -h * 0.72, w * 0.32, h * 0.74, w * 0.18);
+
+      this.scene.tweens.add({
+        targets: flame,
+        scaleY: 1.38,
+        scaleX: 1.25,
+        alpha: 0,
+        duration: isUltimate ? 460 : 340,
+        ease: 'Cubic.easeOut',
+        onComplete: () => flame.destroy(),
+      });
+    }
+
+    // Blazing embers flying everywhere!
+    const emberCount = isUltimate ? 20 : 12;
+    for (let i = 0; i < emberCount; i++) {
+      const ang = (i / emberCount) * Math.PI * 2 + Math.random() * 0.3;
+      const spd = (130 + Math.random() * 170) * scale;
+      this.acquireParticle(this.sparkPool, {
+        x,
+        y: y - 16 * scale,
+        vx: Math.cos(ang) * spd,
+        vy: Math.sin(ang) * spd * 0.58,
+        vz: 180 + Math.random() * 190,
+        lifeMs: isUltimate ? 440 : 320,
+        startScale: (isUltimate ? 1.6 : 1.25) * scale,
+        endScale: 0.25 * scale,
+        depth: depth + 4,
+        tint: i % 3 === 0 ? 0xfef08a : i % 3 === 1 ? 0xf97316 : 0xef4444,
+        gravity: 340,
+      });
+    }
+  }
+
+  /**
+   * Huang Zhong — Meteor Fire Arrow Rain & Nine-Heavens Golden Phoenix Storm VFX!
+   */
+  public spawnPhoenixSolarStorm(x: number, y: number, isUltimate = false): void {
+    if (!this.scene) return;
+    const scale = getPerspectiveScale(y);
+    const depth = getDepthOrder(y) + 32;
+
+    if (isUltimate) {
+      // Blazing golden-crimson Phoenix Wings unfurling behind Huang Zhong!
+      const wings = this.scene.add.graphics().setPosition(x, y - 34 * scale).setDepth(depth - 2);
+      for (const side of [-1, 1]) {
+        wings.fillStyle(0xf97316, 0.72);
+        wings.beginPath();
+        wings.moveTo(0, 0);
+        wings.lineTo(side * 125 * scale, -78 * scale);
+        wings.lineTo(side * 145 * scale, -18 * scale);
+        wings.lineTo(side * 86 * scale, 18 * scale);
+        wings.closePath();
+        wings.fillPath();
+
+        wings.fillStyle(0xfde047, 0.92);
+        wings.beginPath();
+        wings.moveTo(0, -4 * scale);
+        wings.lineTo(side * 96 * scale, -56 * scale);
+        wings.lineTo(side * 108 * scale, -12 * scale);
+        wings.lineTo(side * 62 * scale, 8 * scale);
+        wings.closePath();
+        wings.fillPath();
+      }
+      wings.fillStyle(0xffffff, 0.85);
+      wings.fillCircle(0, -10 * scale, 28 * scale);
+
+      this.scene.tweens.add({
+        targets: wings,
+        scaleX: 1.55,
+        scaleY: 1.38,
+        y: wings.y - 24 * scale,
+        alpha: 0,
+        duration: 540,
+        ease: 'Cubic.easeOut',
+        onComplete: () => wings.destroy(),
+      });
+
+      this.spawnInfernoFirePillars(x, y, 165, false);
+    } else {
+      // Meteor Fire Arrow streaking down from the sky into target zone!
+      const streak = this.scene.add.graphics().setDepth(depth);
+      const sx = x - 75 * scale;
+      const sy = y - 260 * scale;
+      streak.lineStyle(12 * scale, 0xf97316, 0.6);
+      streak.lineBetween(sx, sy, x, y);
+      streak.lineStyle(5 * scale, 0xfde047, 0.96);
+      streak.lineBetween(sx, sy, x, y);
+      streak.lineStyle(2.5 * scale, 0xffffff, 1);
+      streak.lineBetween(sx, sy, x, y);
+      streak.fillStyle(0xf97316, 0.42);
+      streak.fillEllipse(x, y, 76 * scale, 44 * scale);
+      streak.lineStyle(3 * scale, 0xfde047, 0.95);
+      streak.strokeEllipse(x, y, 82 * scale, 48 * scale);
+
+      this.scene.tweens.add({
+        targets: streak,
+        alpha: 0,
+        duration: 260,
+        ease: 'Quad.easeOut',
+        onComplete: () => streak.destroy(),
+      });
+    }
+  }
+
   private spawnDustBurst(
     x: number,
     y: number,

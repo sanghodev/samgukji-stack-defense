@@ -73,6 +73,10 @@ export class BootScene extends Phaser.Scene {
       frameWidth: 160,
       frameHeight: 160,
     });
+    this.load.spritesheet('hero_dizzy_poses', '../assets/sprites/hero_dizzy_poses.png', {
+      frameWidth: 160,
+      frameHeight: 160,
+    });
     this.load.image('guard_shield_vfx', '../assets/sprites/guard_shield_vfx.png');
     this.load.spritesheet('combat_vfx', '../assets/sprites/combat_vfx.png', {
       frameWidth: 160,

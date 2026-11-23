@@ -14,8 +14,12 @@ export interface MoveInputState {
   heavyAttackPressed: boolean;
   /** True on the frame Interact / Pick up / Throw (SPACE) was pressed */
   interactPressed: boolean;
-  /** True on the frame Special Ability (V) was pressed */
+  /** True on the frame Skill 1 (V or 1) was pressed */
   specialPressed: boolean;
+  /** True on the frame Skill 2 Elemental Art (B or 2) was pressed */
+  skill2Pressed: boolean;
+  /** True on the frame Skill 3 Emergency Escape Ultimate (N or 3) was pressed */
+  skill3Pressed: boolean;
   /** True while Guard (C or Shift) is held */
   guardHeld: boolean;
   /** True on the frame Switch Hero (TAB) was pressed */
@@ -31,8 +35,8 @@ export interface MoveInputState {
 }
 
 /**
- * Handles smooth 8-direction movement (WASD + Arrows) and responsive combat/mayhem/special/guard inputs
- * (Z, X, C/Shift, V, SPACE, TAB, P, F2, F3, R).
+ * Handles smooth 8-direction movement (WASD + Arrows) and responsive combat/mayhem/3-skill/guard inputs
+ * (Z, X, C/Shift, V/1, B/2, N/3, SPACE, TAB, P, F2, F3, R).
  */
 export class InputSystem implements IGameSystem {
   public readonly id = 'input';
@@ -51,6 +55,11 @@ export class InputSystem implements IGameSystem {
     c: Phaser.Input.Keyboard.Key;
     shift: Phaser.Input.Keyboard.Key;
     v: Phaser.Input.Keyboard.Key;
+    b: Phaser.Input.Keyboard.Key;
+    n: Phaser.Input.Keyboard.Key;
+    one: Phaser.Input.Keyboard.Key;
+    two: Phaser.Input.Keyboard.Key;
+    three: Phaser.Input.Keyboard.Key;
     space: Phaser.Input.Keyboard.Key;
     tab: Phaser.Input.Keyboard.Key;
     p: Phaser.Input.Keyboard.Key;
@@ -80,6 +89,11 @@ export class InputSystem implements IGameSystem {
       c: kb.addKey(Phaser.Input.Keyboard.KeyCodes.C),
       shift: kb.addKey(Phaser.Input.Keyboard.KeyCodes.SHIFT),
       v: kb.addKey(Phaser.Input.Keyboard.KeyCodes.V),
+      b: kb.addKey(Phaser.Input.Keyboard.KeyCodes.B),
+      n: kb.addKey(Phaser.Input.Keyboard.KeyCodes.N),
+      one: kb.addKey(Phaser.Input.Keyboard.KeyCodes.ONE),
+      two: kb.addKey(Phaser.Input.Keyboard.KeyCodes.TWO),
+      three: kb.addKey(Phaser.Input.Keyboard.KeyCodes.THREE),
       space: kb.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE),
       tab: kb.addKey(Phaser.Input.Keyboard.KeyCodes.TAB),
       p: kb.addKey(Phaser.Input.Keyboard.KeyCodes.P),
@@ -99,6 +113,8 @@ export class InputSystem implements IGameSystem {
         heavyAttackPressed: false,
         interactPressed: false,
         specialPressed: false,
+        skill2Pressed: false,
+        skill3Pressed: false,
         guardHeld: false,
         switchHeroPressed: false,
         partySetupPressed: false,
@@ -127,7 +143,15 @@ export class InputSystem implements IGameSystem {
       lightAttackPressed: Phaser.Input.Keyboard.JustDown(this.keys.z),
       heavyAttackPressed: Phaser.Input.Keyboard.JustDown(this.keys.x),
       interactPressed: Phaser.Input.Keyboard.JustDown(this.keys.space),
-      specialPressed: Phaser.Input.Keyboard.JustDown(this.keys.v),
+      specialPressed:
+        Phaser.Input.Keyboard.JustDown(this.keys.v) ||
+        Phaser.Input.Keyboard.JustDown(this.keys.one),
+      skill2Pressed:
+        Phaser.Input.Keyboard.JustDown(this.keys.b) ||
+        Phaser.Input.Keyboard.JustDown(this.keys.two),
+      skill3Pressed:
+        Phaser.Input.Keyboard.JustDown(this.keys.n) ||
+        Phaser.Input.Keyboard.JustDown(this.keys.three),
       guardHeld: this.keys.c.isDown || this.keys.shift.isDown,
       switchHeroPressed: Phaser.Input.Keyboard.JustDown(this.keys.tab),
       partySetupPressed: Phaser.Input.Keyboard.JustDown(this.keys.p),

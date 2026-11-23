@@ -178,7 +178,8 @@ export class Bandit {
     this.archetype = archetype;
     this.spec = BANDIT_ARCHETYPES[archetype];
     this.mass = this.spec.mass;
-    this.baseSpriteScale = 0.68 * this.spec.scaleMul;
+    // Regular bandits stay distinctly smaller than heroes so playable heroes always stand out!
+    this.baseSpriteScale = 0.56 * this.spec.scaleMul;
     this.animRowIndex = this.resolveAnimRowIndex(archetype, slotIndex);
 
     this.x = spawnX;
@@ -1701,9 +1702,8 @@ export class Bandit {
     this.shadow.setScale(shScale, shScale);
     this.shadow.setAlpha(0.4 * shScale);
 
-    if (this.state !== 'KNOCKDOWN') {
-      this.reactionText.y = spriteY - 76;
-    }
+    // Keep battlefield clean: no floating Korean reaction text above bandits' heads
+    this.reactionText.setVisible(false);
 
     // Optional AI state & fear debug readout
     if (this.step4.showAiDebug && this.state !== 'DEFEATED') {

@@ -14,6 +14,8 @@ export interface HeroTreasureModifiers {
   chargeDistanceMul: number;
 }
 
+export type HeroElementType = 'WATER' | 'THUNDER' | 'FIRE' | 'SOLAR';
+
 export interface HeroDataSpec {
   readonly id: HeroId;
   readonly displayName: string;
@@ -21,6 +23,12 @@ export interface HeroDataSpec {
   readonly roleLabelKr: string;
   readonly role: HeroRole;
   readonly specialName: string;
+  readonly skill2Name: string;
+  readonly skill2CooldownMs: number;
+  readonly skill2Element: HeroElementType;
+  readonly skill3Name: string;
+  readonly skill3CooldownMs: number;
+  readonly skill3Element: HeroElementType;
   readonly accentColor: string;
   readonly accentHex: number;
   readonly maxHp: number;
@@ -49,6 +57,12 @@ export const HERO_DATA: Record<HeroId, HeroDataSpec> = {
     roleLabelKr: '돌격 창술',
     role: 'striker',
     specialName: '백룡연격',
+    skill2Name: '창해수룡파',
+    skill2CooldownMs: 8500,
+    skill2Element: 'WATER',
+    skill3Name: '천수룡 강림',
+    skill3CooldownMs: 16000,
+    skill3Element: 'WATER',
     accentColor: '#38bdf8',
     accentHex: 0x38bdf8,
     maxHp: 110,
@@ -68,6 +82,12 @@ export const HERO_DATA: Record<HeroId, HeroDataSpec> = {
     roleLabelKr: '광역 제압',
     role: 'crowd_control',
     specialName: '청룡선풍참',
+    skill2Name: '청룡낙뢰참',
+    skill2CooldownMs: 9000,
+    skill2Element: 'THUNDER',
+    skill3Name: '뇌신 청룡강림',
+    skill3CooldownMs: 17000,
+    skill3Element: 'THUNDER',
     accentColor: '#22c55e',
     accentHex: 0x22c55e,
     maxHp: 125,
@@ -87,6 +107,12 @@ export const HERO_DATA: Record<HeroId, HeroDataSpec> = {
     roleLabelKr: '돌진 파괴',
     role: 'initiator',
     specialName: '맹장돌진',
+    skill2Name: '사자후 화염진',
+    skill2CooldownMs: 9000,
+    skill2Element: 'FIRE',
+    skill3Name: '폭염 화산폭발',
+    skill3CooldownMs: 17000,
+    skill3Element: 'FIRE',
     accentColor: '#c084fc',
     accentHex: 0xc084fc,
     maxHp: 130,
@@ -106,6 +132,12 @@ export const HERO_DATA: Record<HeroId, HeroDataSpec> = {
     roleLabelKr: '원거리 궁수',
     role: 'ranged',
     specialName: '만시제발',
+    skill2Name: '유성화우',
+    skill2CooldownMs: 8800,
+    skill2Element: 'FIRE',
+    skill3Name: '구천 봉황폭격',
+    skill3CooldownMs: 16500,
+    skill3Element: 'SOLAR',
     accentColor: '#facc15',
     accentHex: 0xfacc15,
     maxHp: 100,

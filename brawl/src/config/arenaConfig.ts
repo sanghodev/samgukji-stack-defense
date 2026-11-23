@@ -7,33 +7,33 @@ export const GAME_HEIGHT = 720;
  * all the way back to the distant fortress gate (성문).
  */
 export const ARENA_BOUNDS = {
-  /** Far rear playable edge directly in front of the distant castle gate */
-  backY: 226,
+  /** Balanced rear courtyard edge — keeps action in the main plaza without shrinking into the distant gate */
+  backY: 286,
   /** Front playable edge closest to the viewer */
-  frontY: 696,
-  /** Narrower X boundaries at the far rear (backY) aligning tents & castle gate */
-  backLeftX: 295,
-  backRightX: 1045,
+  frontY: 690,
+  /** Rear X boundaries aligned with courtyard tents & side fences at backY */
+  backLeftX: 245,
+  backRightX: 1035,
   /** Wide X boundaries at the foreground (frontY) */
-  frontLeftX: 36,
-  frontRightX: 1244,
+  frontLeftX: 40,
+  frontRightX: 1240,
   /** One-point perspective vanishing point aligned with the castle gate arch horizon */
   vanishingX: 640,
   vanishingY: 118,
 } as const;
 
 /**
- * Authentic 2.5D beat-'em-up perspective scaling (~4x depth growth) so characters & props
- * shrink naturally toward the distant castle gate and grow prominently in the foreground.
+ * Cohesive arcade 2.5D perspective scaling (~2.1x smooth depth growth) so perspective feels natural
+ * from the rear courtyard to the foreground plaza without jarring scale disparity.
  */
 export const PERSPECTIVE_CONFIG = {
-  /** Character scale at the far rear near the castle gate (backY) */
-  minScale: 0.38,
-  /** Character scale at the foreground closest to the viewer (frontY) */
-  maxScale: 1.56,
+  /** Character scale at the rear courtyard edge (backY) */
+  minScale: 0.64,
+  /** Character scale at the foreground plaza (frontY) */
+  maxScale: 1.34,
   /** Screen-space movement speed multiplier at back vs front */
-  minSpeedFactor: 0.46,
-  maxSpeedFactor: 1.24,
+  minSpeedFactor: 0.66,
+  maxSpeedFactor: 1.18,
   /** Foreshortening ratio for depth (up/down) movement relative to horizontal */
   verticalMoveRatio: 0.68,
 } as const;

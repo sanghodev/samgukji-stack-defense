@@ -10,6 +10,9 @@ export interface HeroHudCardData {
   hp: number;
   maxHp: number;
   specialReadyRatio: number;
+  skill2ReadyRatio?: number;
+  skill3ReadyRatio?: number;
+  isLowHpEmergency?: boolean;
   isDefeated: boolean;
   treasureCount?: number;
 }
@@ -34,12 +37,14 @@ interface HeroCardNodes {
   hpBar: Phaser.GameObjects.Graphics;
   hpText: Phaser.GameObjects.Text;
   spBar: Phaser.GameObjects.Graphics;
-  spText: Phaser.GameObjects.Text;
+  s1Text: Phaser.GameObjects.Text;
+  s2Text: Phaser.GameObjects.Text;
+  s3Text: Phaser.GameObjects.Text;
 }
 
 /**
- * Dynamic 1-to-4 Hero Party HUD for Step 5:
- * Renders compact HP & [V] Special cards ONLY for active heroes (unused slots remain hidden!).
+ * Dynamic 1-to-4 Hero Party HUD:
+ * Renders compact HP & 3-Skill ([V], [B], [N] Emergency Escape) cards ONLY for active heroes!
  */
 export class CombatHud implements IGameSystem {
   public readonly id = 'combat-hud';
@@ -69,11 +74,11 @@ export class CombatHud implements IGameSystem {
     const { scene } = ctx;
 
     // 1. Pre-create 4 compact Hero Party Cards along top-left (only active heroes are shown!)
-    const cardW = 196;
-    const cardH = 56;
+    const cardW = 212;
+    const cardH = 66;
     for (let i = 0; i < 4; i++) {
       const cx = 12 + i * (cardW + 8);
-      const cy = 12;
+      const cy = 10;
       const bg = scene.add.graphics();
       const nameText = scene.add.text(8, 5, '', {
         fontFamily: 'Malgun Gothic, Apple SD Gothic Neo, sans-serif',
@@ -90,32 +95,45 @@ export class CombatHud implements IGameSystem {
         })
         .setOrigin(1, 0);
       const spBar = scene.add.graphics();
-      const spText = scene.add.text(8, 38, '', {
+      const s1Text = scene.add.text(10, 36, '', {
         fontFamily: 'Malgun Gothic, Apple SD Gothic Neo, sans-serif',
-        fontSize: '10px',
+        fontSize: '9px',
         fontStyle: 'bold',
         color: '#fde047',
       });
+      const s2Text = scene.add.text(78, 36, '', {
+        fontFamily: 'Malgun Gothic, Apple SD Gothic Neo, sans-serif',
+        fontSize: '9px',
+        fontStyle: 'bold',
+        color: '#7dd3fc',
+      });
+      const s3Text = scene.add.text(146, 36, '', {
+        fontFamily: 'Malgun Gothic, Apple SD Gothic Neo, sans-serif',
+        fontSize: '9px',
+        fontStyle: 'bold',
+        color: '#fb923c',
+      });
 
       const container = scene.add
-        .container(cx, cy, [bg, nameText, hpBar, hpText, spBar, spText])
+        .container(cx, cy, [bg, nameText, hpBar, hpText, spBar, s1Text, s2Text, s3Text])
         .setDepth(DEPTH_LAYERS.HUD)
         .setVisible(false);
 
-      this.heroCards.push({ container, bg, nameText, hpBar, hpText, spBar, spText });
+      this.heroCards.push({ container, bg, nameText, hpBar, hpText, spBar, s1Text, s2Text, s3Text });
     }
+    void cardH;
 
     // 2. Top-right Party Setup button + Title + Counter
     const badgeW = 244;
     const bx = GAME_WIDTH - badgeW - 12;
     const titleBg = scene.add.graphics().setDepth(DEPTH_LAYERS.HUD);
     titleBg.fillStyle(0x1c120c, 0.84);
-    titleBg.fillRoundedRect(bx, 12, badgeW, 56, 6);
+    titleBg.fillRoundedRect(bx, 10, badgeW, 56, 6);
     titleBg.lineStyle(1.5, 0xfbbf24, 0.72);
-    titleBg.strokeRoundedRect(bx, 12, badgeW, 56, 6);
+    titleBg.strokeRoundedRect(bx, 10, badgeW, 56, 6);
 
     this.counterText = scene.add
-      .text(bx + badgeW / 2, 24, '제압: 0 | 항복: 0 | 산적: 12', {
+      .text(bx + badgeW / 2, 22, '제압: 0 | 항복: 0 | 산적: 12', {
         fontFamily: 'Malgun Gothic, Apple SD Gothic Neo, sans-serif',
         fontSize: '11px',
         fontStyle: 'bold',
@@ -125,12 +143,12 @@ export class CombatHud implements IGameSystem {
       .setDepth(DEPTH_LAYERS.HUD + 1);
 
     const partyBtn = scene.add
-      .rectangle(bx + badgeW / 2, 50, 186, 22, 0x1e293b, 0.95)
+      .rectangle(bx + badgeW / 2, 48, 186, 22, 0x1e293b, 0.95)
       .setStrokeStyle(1, 0xfbbf24, 0.8)
       .setDepth(DEPTH_LAYERS.HUD + 1)
       .setInteractive({ useHandCursor: true });
     const partyBtnTxt = scene.add
-      .text(bx + badgeW / 2, 50, '⚔ 파티 편성 1~4인 (P)', {
+      .text(bx + badgeW / 2, 48, '⚔ 파티 편성 1~4인 (P)', {
         fontFamily: 'Malgun Gothic, Apple SD Gothic Neo, sans-serif',
         fontSize: '11px',
         fontStyle: 'bold',
@@ -159,7 +177,7 @@ export class CombatHud implements IGameSystem {
       .setVisible(false);
 
     // 4. Bottom-right controls legend
-    const hintW = 810;
+    const hintW = 910;
     const hintX = GAME_WIDTH - hintW - 12;
     const hintBg = scene.add.graphics().setDepth(DEPTH_LAYERS.HUD);
     hintBg.fillStyle(0x0b101b, 0.84);
@@ -171,7 +189,7 @@ export class CombatHud implements IGameSystem {
       .text(
         hintX + hintW / 2,
         GAME_HEIGHT - 20,
-        'WASD: 이동 · Z: 콤보 · X: 강공격 · C/Shift: 방어 · V: 필살기 · SPACE: 잡기/던지기 · TAB: 교대 · P: 파티(1~4인) · F2: 디버그',
+        'WASD: 이동 · Z: 콤보 · X: 강공격 · C/Shift: 방어 · V/B/N(1·2·3): 스킬3종(N:위기탈출!) · SPACE: 던지기 · TAB: 교대 · P: 파티',
         {
           fontFamily: 'Malgun Gothic, Apple SD Gothic Neo, sans-serif',
           fontSize: '10.5px',
@@ -231,8 +249,9 @@ export class CombatHud implements IGameSystem {
       this.rejectFlashMs = Math.max(0, this.rejectFlashMs - deltaMs);
     }
 
-    const cardW = 196;
-    const cardH = 56;
+    const cardW = 212;
+    const cardH = 66;
+    const nowPulse = Math.floor(performance.now() / 220) % 2 === 0;
 
     for (let i = 0; i < 4; i++) {
       const node = this.heroCards[i];
@@ -243,15 +262,21 @@ export class CombatHud implements IGameSystem {
       }
 
       const prof = HERO_DATA[data.heroId];
+      const s1Ratio = data.specialReadyRatio;
+      const s2Ratio = data.skill2ReadyRatio ?? 1;
+      const s3Ratio = data.skill3ReadyRatio ?? 1;
+      const emergencyReady = Boolean(data.isLowHpEmergency && s3Ratio >= 1);
+
       node.container.setVisible(true);
 
       node.bg.clear();
-      node.bg.fillStyle(0x141822, data.isDefeated ? 0.55 : 0.86);
+      node.bg.fillStyle(0x141822, data.isDefeated ? 0.55 : 0.88);
       node.bg.fillRoundedRect(0, 0, cardW, cardH, 6);
+      const borderCol = emergencyReady && nowPulse ? 0xfacc15 : prof.accentHex;
       node.bg.lineStyle(
-        data.control === 'HUMAN' ? 2 : 1,
-        prof.accentHex,
-        data.control === 'HUMAN' ? 0.92 : 0.5,
+        emergencyReady ? 2.5 : data.control === 'HUMAN' ? 2 : 1,
+        borderCol,
+        emergencyReady ? 1 : data.control === 'HUMAN' ? 0.92 : 0.5,
       );
       node.bg.strokeRoundedRect(0, 0, cardW, cardH, 6);
 
@@ -265,30 +290,60 @@ export class CombatHud implements IGameSystem {
       const hpRatio = Phaser.Math.Clamp(data.hp / Math.max(1, data.maxHp), 0, 1);
       node.hpBar.clear();
       node.hpBar.fillStyle(0x0f172a, 1);
-      node.hpBar.fillRoundedRect(8, 22, cardW - 16, 11, 3);
+      node.hpBar.fillRoundedRect(8, 21, cardW - 16, 10, 3);
       if (hpRatio > 0) {
-        node.hpBar.fillStyle(hpRatio > 0.3 ? 0x22c55e : 0xef4444, 1);
-        node.hpBar.fillRoundedRect(8, 22, Math.max(4, Math.round((cardW - 16) * hpRatio)), 11, 3);
+        node.hpBar.fillStyle(hpRatio > 0.35 ? 0x22c55e : 0xef4444, 1);
+        node.hpBar.fillRoundedRect(8, 21, Math.max(4, Math.round((cardW - 16) * hpRatio)), 10, 3);
       }
 
-      // Special bar
-      const spReady = data.specialReadyRatio >= 1;
+      // 3-Skill compact gauge row ([V] Skill 1 · [B] Skill 2 · [N] Emergency Escape Ultimate!)
       node.spBar.clear();
-      node.spBar.fillStyle(0x0f172a, 1);
-      node.spBar.fillRoundedRect(98, 40, cardW - 106, 9, 3);
-      if (data.specialReadyRatio > 0) {
-        const spCol = this.rejectFlashMs > 0 && data.control === 'HUMAN' ? 0xef4444 : spReady ? prof.accentHex : 0x475569;
-        node.spBar.fillStyle(spCol, 1);
-        node.spBar.fillRoundedRect(
-          98,
-          40,
-          Math.max(3, Math.round((cardW - 106) * data.specialReadyRatio)),
-          9,
-          3,
-        );
-      }
-      node.spText.setText(spReady ? `${prof.specialName} OK` : prof.specialName);
-      node.spText.setColor(spReady ? '#fde047' : '#94a3b8');
+      const segW = 62;
+      const drawSeg = (x: number, ratio: number, readyHex: number, isEmerg = false) => {
+        node.spBar.fillStyle(0x0f172a, 1);
+        node.spBar.fillRoundedRect(x, 51, segW, 8, 2);
+        if (ratio > 0) {
+          const col =
+            this.rejectFlashMs > 0 && data.control === 'HUMAN' && ratio < 1
+              ? 0xef4444
+              : ratio >= 1
+                ? isEmerg && nowPulse
+                  ? 0xffffff
+                  : readyHex
+                : 0x475569;
+          node.spBar.fillStyle(col, 1);
+          node.spBar.fillRoundedRect(x, 51, Math.max(3, Math.round(segW * ratio)), 8, 2);
+        }
+      };
+
+      const elColor =
+        prof.skill2Element === 'WATER'
+          ? 0x38bdf8
+          : prof.skill2Element === 'THUNDER'
+            ? 0x4ade80
+            : 0xf97316;
+      drawSeg(8, s1Ratio, prof.accentHex, false);
+      drawSeg(75, s2Ratio, elColor, false);
+      drawSeg(142, s3Ratio, 0xfacc15, emergencyReady);
+
+      const s2Icon =
+        prof.skill2Element === 'WATER'
+          ? '💧'
+          : prof.skill2Element === 'THUNDER'
+            ? '⚡'
+            : '🔥';
+      const s3Icon = prof.skill3Element === 'SOLAR' ? '☀' : s2Icon;
+
+      node.s1Text.setText(`[V]${prof.specialName.slice(0, 3)}`);
+      node.s1Text.setColor(s1Ratio >= 1 ? '#fde047' : '#64748b');
+
+      node.s2Text.setText(`[B]${s2Icon}${prof.skill2Name.slice(0, 2)}`);
+      node.s2Text.setColor(s2Ratio >= 1 ? '#7dd3fc' : '#64748b');
+
+      node.s3Text.setText(emergencyReady ? `[N]${s3Icon}탈출!` : `[N]${s3Icon}극오의`);
+      node.s3Text.setColor(
+        emergencyReady && nowPulse ? '#ffffff' : s3Ratio >= 1 ? '#facc15' : '#64748b',
+      );
     }
 
     const waveStr = snap.waveNumber ? `W${snap.waveNumber}/${snap.totalWaves ?? 5} · ` : '';

@@ -586,13 +586,9 @@ export class BanditChief {
     return best;
   }
 
-  private showShout(msg: string, durationMs: number): void {
-    this.shoutText.setText(msg).setVisible(true);
-    this.scene.time.delayedCall(durationMs, () => {
-      if (this.shoutText && this.shoutText.active && this.shoutText.text === msg) {
-        this.shoutText.setVisible(false);
-      }
-    });
+  private showShout(_msg: string, _durationMs: number): void {
+    // Visual telegraphs & boss animations speak clearly without overhead Korean text clutter
+    this.shoutText.setVisible(false);
   }
 
   private drawTelegraphCircle(ox: number, oy: number, radius: number, color: number): void {

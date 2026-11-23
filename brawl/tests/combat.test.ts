@@ -743,6 +743,26 @@ test('Higher-tier bandit archetypes select distinct combat skills by range while
   assert.equal(pickEnemySkillForArchetype('coward', 100, () => 0.1), 'NONE');
 });
 
+import { HERO_DATA, ALL_HERO_IDS } from '../src/config/heroConfig.ts';
+
+test('All 4 heroes define 3 unique signature skills including elemental emergency escape ultimates', () => {
+  const seenSkillNames = new Set<string>();
+  for (const id of ALL_HERO_IDS) {
+    const spec = HERO_DATA[id];
+    assert.ok(spec.specialName.length > 0);
+    assert.ok(spec.skill2Name.length > 0 && spec.skill2CooldownMs >= 6000);
+    assert.ok(spec.skill3Name.length > 0 && spec.skill3CooldownMs >= 12000);
+    seenSkillNames.add(spec.specialName);
+    seenSkillNames.add(spec.skill2Name);
+    seenSkillNames.add(spec.skill3Name);
+  }
+  assert.equal(seenSkillNames.size, 12, 'All 4 heroes x 3 skills = 12 distinct skill names');
+  assert.equal(HERO_DATA.zhaoyun.skill3Element, 'WATER');
+  assert.equal(HERO_DATA.guanyu.skill3Element, 'THUNDER');
+  assert.equal(HERO_DATA.zhangfei.skill3Element, 'FIRE');
+  assert.equal(HERO_DATA.huangzhong.skill3Element, 'SOLAR');
+});
+
 
 
 

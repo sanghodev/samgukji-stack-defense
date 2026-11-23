@@ -75,8 +75,13 @@ export class AIHeroController {
     mem.pickupCooldownMs = Math.max(0, mem.pickupCooldownMs - deltaMs);
     mem.guardHoldMs = Math.max(0, mem.guardHoldMs - deltaMs);
 
-    // If dizzy or knocked down, shake off dizzy naturally
+    // If dizzy or knocked down: fire Skill 3 Emergency Escape Ultimate if ready (especially at low HP!), else mash out!
     if (hero.bodyState === 'DIZZY' || hero.bodyState === 'KNOCKDOWN') {
+      if (hero.skill3ReadyRatio >= 1 && (hero.isLowHpEmergency || hero.bodyState === 'DIZZY')) {
+        out.skill3Pressed = true;
+        mem.actionCooldownMs = 600;
+        return out;
+      }
       if (mem.actionCooldownMs <= 0) {
         out.lightAttackPressed = true;
         mem.actionCooldownMs = 340;
@@ -163,6 +168,35 @@ export class AIHeroController {
       if (dh < 145) nearbyHeroCount += 1;
       const dtTarget = Math.hypot(b.x - target.x, (b.y - target.y) / PERSPECTIVE_CONFIG.verticalMoveRatio);
       if (dtTarget < 120) clusterAroundTarget += 1;
+    }
+
+    // 0A. Emergency Escape Skill 3 Ultimate when critically low HP or heavily surrounded!
+    if (
+      hero.skill3ReadyRatio >= 1 &&
+      !hero.isCarrying &&
+      ((hero.isLowHpEmergency && (nearbyHeroCount >= 1 || bossAlive)) || nearbyHeroCount >= 6) &&
+      mem.actionCooldownMs <= 0
+    ) {
+      hero.setFacingToward(dirX, dirY);
+      out.skill3Pressed = true;
+      mem.actionCooldownMs = 1100 * paceMul;
+      return out;
+    }
+
+    // 0B. Elemental Skill 2 Art when facing a dense cluster or Boss!
+    if (
+      hero.skill2ReadyRatio >= 1 &&
+      !hero.isCarrying &&
+      !hero.isAttacking &&
+      !hero.isCharging &&
+      this.tuning.aiAggression !== 'PASSIVE' &&
+      (nearbyHeroCount >= 3 || clusterAroundTarget >= 3 || (target.isBoss && dist < 240)) &&
+      mem.actionCooldownMs <= 0
+    ) {
+      hero.setFacingToward(dirX, dirY);
+      out.skill2Pressed = true;
+      mem.actionCooldownMs = 980 * paceMul;
+      return out;
     }
 
     // 1. If AI is already carrying a lifted table/jar/basket, stride into throw range & hurl it!

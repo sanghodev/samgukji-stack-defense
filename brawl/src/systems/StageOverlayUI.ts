@@ -342,7 +342,7 @@ export class StageOverlayUI implements IGameSystem {
 
         <div style="display:flex;justify-content:space-between;align-items:center;background:rgba(15,23,42,0.8);border:1px solid #334155;border-radius:8px;padding:8px 14px;margin-bottom:14px;font-size:12px;color:#cbd5e1;">
           <span>현재 출진 인원: <b style="color:#fde047;">총 ${activeCount}명</b> (플레이어 ${humanCount} · AI 동료 ${aiCount})</span>
-          <span style="font-size:11px;color:#94a3b8;">WASD 이동 · Z 콤보 · X 강공격 · V 필살기 · SPACE 던지기</span>
+          <span style="font-size:11px;color:#94a3b8;">WASD 이동 · Z/X 공격 · C 방어 · V/B/N 스킬3종(N:위기탈출!) · SPACE 던지기</span>
         </div>
 
         <div style="text-align:center;">

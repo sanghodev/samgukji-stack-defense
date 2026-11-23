@@ -12,6 +12,8 @@ export interface HeroActionInput {
   lightAttackPressed: boolean;
   heavyAttackPressed: boolean;
   specialPressed: boolean;
+  skill2Pressed?: boolean;
+  skill3Pressed?: boolean;
   interactPressed: boolean;
   guardHeld?: boolean;
 }
@@ -24,6 +26,8 @@ export function createEmptyHeroInput(): HeroActionInput {
     lightAttackPressed: false,
     heavyAttackPressed: false,
     specialPressed: false,
+    skill2Pressed: false,
+    skill3Pressed: false,
     interactPressed: false,
     guardHeld: false,
   };
@@ -36,7 +40,7 @@ export interface MultiInputCallbacks {
 
 /**
  * Manages independent local multiplayer input devices (1-4 humans):
- * - 'keyboard': Player 1 keyboard (WASD/Arrows + Z/X/V/SPACE)
+ * - 'keyboard': Player 1 keyboard (WASD/Arrows + Z/X/C/V/B/N/SPACE)
  * - 'gamepad:0' .. 'gamepad:3': Standard HTML5 Gamepad API controllers
  * Supports stable device-to-slot ownership, Start-button join-in-progress,
  * safe disconnection handling, and simulated inputs for automated/F2 testing.
@@ -131,6 +135,8 @@ export class MultiInputManager implements IGameSystem {
         lightAttackPressed: keyboardSample.lightAttackPressed,
         heavyAttackPressed: keyboardSample.heavyAttackPressed,
         specialPressed: keyboardSample.specialPressed,
+        skill2Pressed: keyboardSample.skill2Pressed,
+        skill3Pressed: keyboardSample.skill3Pressed,
         interactPressed: keyboardSample.interactPressed,
         guardHeld: keyboardSample.guardHeld,
       };
@@ -182,7 +188,9 @@ export class MultiInputManager implements IGameSystem {
       isMoving: len > 0.1,
       lightAttackPressed: justPressed(0) || justPressed(2), // A or X
       heavyAttackPressed: justPressed(1), // B
-      specialPressed: justPressed(3) || justPressed(5), // Y or RB
+      specialPressed: justPressed(3), // Y (Skill 1)
+      skill2Pressed: justPressed(5), // RB (Skill 2)
+      skill3Pressed: justPressed(10) || justPressed(11) || (curButtons[4] && justPressed(5)), // L3/R3 or LB+RB (Emergency Escape Ultimate)
       interactPressed: justPressed(4), // LB
       guardHeld: Boolean(curButtons[6] || curButtons[7]), // LT or RT
     };

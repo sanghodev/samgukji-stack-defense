@@ -124,6 +124,8 @@ export interface WarriorCombatCallbacks {
   onHeroLanded?: (hero: Warrior, strong: boolean) => void;
   onHeroDizzy?: (hero: Warrior) => void;
   onHeroPowerUp?: (hero: Warrior, treasureCount: number, treasureNameKr: string) => void;
+  onHeroSkill2?: (hero: Warrior, dirX: number, dirY: number) => void;
+  onHeroSkill3Ultimate?: (hero: Warrior) => void;
 }
 
 /**
@@ -169,7 +171,7 @@ export class Warrior {
   // Step 3 Carried object
   public carriedObject: EnvironmentalObject | null = null;
 
-  // Step 4-5 Signature Special states
+  // 3-Skill Hero Arsenal (Skill 1: Special, Skill 2: Elemental Art, Skill 3: Emergency Escape Ultimate)
   public chargePhase: ChargePhase = 'NONE';
   public chargeDirX = 1;
   public chargeDirY = 0;
@@ -177,6 +179,10 @@ export class Warrior {
   public chargeCurrentSpeed = 0;
   public specialCooldownMs = 0;
   public specialMaxCooldownMs: number;
+  public skill2CooldownMs = 0;
+  public skill2MaxCooldownMs: number;
+  public skill3CooldownMs = 0;
+  public skill3MaxCooldownMs: number;
 
   // Step 6 Per-Hero Treasure Evolution State
   public readonly acquiredTreasures: string[] = [];
@@ -207,10 +213,11 @@ export class Warrior {
   private readonly tagText: Phaser.GameObjects.Text;
   private readonly statusText: Phaser.GameObjects.Text;
 
-  private readonly zhaoYunDirScale = 0.76;
-  private readonly zhaoYunRunScale = 0.69;
-  private readonly zhaoYunActionScale = 0.66;
-  private readonly customSheetScale = 0.69;
+  // Heroic 2-head chibi scales (~95px base height at scale=1.0 so heroes always stand out over regular bandits!)
+  private readonly zhaoYunDirScale = 0.81;
+  private readonly zhaoYunRunScale = 0.74;
+  private readonly zhaoYunActionScale = 0.71;
+  private readonly customSheetScale = 0.74;
 
   private phaseTimerMs = 0;
   private comboStep = 0;
@@ -232,6 +239,7 @@ export class Warrior {
   private consecutiveHitsTaken = 0;
   private consecutiveHitResetMs = 0;
   private statusShoutTimerMs = 0;
+  private ultimatePoseTimerMs = 0;
   private powerAuraPhase = 0;
   private powerUpPulseMs = 0;
   private kiSparkCooldownMs = 0;
@@ -275,6 +283,8 @@ export class Warrior {
     this.maxHp = prof.maxHp;
     this.hp = prof.maxHp;
     this.specialMaxCooldownMs = prof.specialCooldownMs;
+    this.skill2MaxCooldownMs = prof.skill2CooldownMs;
+    this.skill3MaxCooldownMs = prof.skill3CooldownMs;
 
     // Subtle colored ground ring for instant 4-hero visual clarity
     this.groundRing = scene.add.graphics();
@@ -429,6 +439,28 @@ export class Warrior {
     );
   }
 
+  public get skill2ReadyRatio(): number {
+    if (this.step4.chargeNoCooldown || this.skill2CooldownMs <= 0) return 1;
+    return Phaser.Math.Clamp(
+      1 - this.skill2CooldownMs / Math.max(1, this.skill2MaxCooldownMs),
+      0,
+      1,
+    );
+  }
+
+  public get skill3ReadyRatio(): number {
+    if (this.step4.chargeNoCooldown || this.skill3CooldownMs <= 0) return 1;
+    return Phaser.Math.Clamp(
+      1 - this.skill3CooldownMs / Math.max(1, this.skill3MaxCooldownMs),
+      0,
+      1,
+    );
+  }
+
+  public get isLowHpEmergency(): boolean {
+    return !this.isDefeated && this.hp / Math.max(1, this.maxHp) <= 0.35;
+  }
+
   public setOwnership(slotIndex: number, controlType: SlotControlType): void {
     this.slotIndex = slotIndex;
     this.controlType = controlType;
@@ -454,9 +486,10 @@ export class Warrior {
     }
   }
 
-  public showShout(text: string, color = '#fde047', durationMs = 900): void {
-    this.statusText.setText(text).setColor(color).setVisible(true);
-    this.statusShoutTimerMs = durationMs;
+  public showShout(_text: string, _color = '#fde047', _durationMs = 900): void {
+    // Keep battlefield visuals crisp and uncluttered — no overhead Korean text popups!
+    this.statusText.setVisible(false);
+    this.statusShoutTimerMs = 0;
   }
 
   public addTreasure(treasureId: string): boolean {
@@ -478,7 +511,6 @@ export class Warrior {
     }
 
     this.powerUpPulseMs = 950;
-    this.showShout(`✨ 파워 업! ★${this.acquiredTreasures.length}`, '#fde047', 1200);
     this.callbacks.onHeroPowerUp?.(this, this.acquiredTreasures.length, def.nameKr);
     return true;
   }
@@ -591,6 +623,99 @@ export class Warrior {
         return true;
       }
     }
+  }
+
+  /**
+   * Skill 2 ([B] / [2]): Hero-unique Elemental Art (Water Wave / Sky Thunder / Flame Pillars / Meteor Arrow Rain).
+   */
+  public triggerSkill2(input: HeroActionInput, ignoreCooldown = false): boolean {
+    if (
+      this.isIncapacitated ||
+      this.isCharging ||
+      this.whiteDragonTimerMs > 0 ||
+      this.cycloneTimerMs > 0
+    ) {
+      return false;
+    }
+
+    const onCooldown =
+      !ignoreCooldown && !this.step4.chargeNoCooldown && this.skill2CooldownMs > 0;
+    if (onCooldown) {
+      this.callbacks.onSpecialCooldownRejected(this);
+      return false;
+    }
+
+    this.bodyState = 'NORMAL';
+    if (this.isCarrying) this.dropCarriedObject();
+    this.cancelAttack();
+
+    if (input.isMoving) {
+      this.setFacingToward(input.x, input.y);
+    }
+
+    const cd = Math.round(this.profile.skill2CooldownMs * this.heroMods.specialCooldownMultiplier);
+    this.skill2MaxCooldownMs = cd;
+    this.skill2CooldownMs = this.step4.chargeNoCooldown ? 0 : cd;
+    this.invulnTimerMs = Math.max(this.invulnTimerMs, 420);
+    this.powerUpPulseMs = Math.max(this.powerUpPulseMs, 420);
+    this.ultimatePoseTimerMs = 340;
+
+    const dirX = Math.cos(this.facingAngle);
+    const dirY = Math.sin(this.facingAngle);
+    this.callbacks.onHeroSkill2?.(this, dirX, dirY);
+    return true;
+  }
+
+  /**
+   * Skill 3 ([N] / [3]): Hero-unique Emergency Escape Elemental Ultimate!
+   * Can be triggered EVEN WHILE DIZZY, KNOCKED DOWN, OR SURROUNDED to turn the tide:
+   * instantly breaks CC, restores +22% grit HP, grants 2.2s invulnerability, strikes a
+   * heroic pose, and blasts all nearby enemies away with elemental fury!
+   */
+  public triggerSkill3Ultimate(input: HeroActionInput, ignoreCooldown = false): boolean {
+    if (this.isDefeated) return false;
+
+    const onCooldown =
+      !ignoreCooldown && !this.step4.chargeNoCooldown && this.skill3CooldownMs > 0;
+    if (onCooldown) {
+      this.callbacks.onSpecialCooldownRejected(this);
+      return false;
+    }
+
+    // Emergency escape: break DIZZY / KNOCKDOWN / AIRBORNE / ATTACK immediately!
+    this.bodyState = 'NORMAL';
+    this.bodyStateTimerMs = 0;
+    this.dizzyTimerMs = 0;
+    this.pendingDizzyMs = 0;
+    this.elevationZ = 0;
+    this.vz = 0;
+    this.knockbackVx = 0;
+    this.knockbackVy = 0;
+    this.dizzyGfx.clear();
+    this.sprite.x = 0;
+    this.sprite.rotation = 0;
+    if (this.isCarrying) this.dropCarriedObject();
+    this.cancelAttack();
+    this.cancelCharge();
+    this.whiteDragonTimerMs = 0;
+    this.cycloneTimerMs = 0;
+
+    if (input.isMoving) {
+      this.setFacingToward(input.x, input.y);
+    }
+
+    const cd = Math.round(this.profile.skill3CooldownMs * this.heroMods.specialCooldownMultiplier);
+    this.skill3MaxCooldownMs = cd;
+    this.skill3CooldownMs = this.step4.chargeNoCooldown ? 0 : cd;
+
+    // Emergency Second-Wind Grit Heal (+22% max HP) + 2.2s full invulnerability + heroic pose!
+    this.heal(Math.max(18, Math.round(this.maxHp * 0.22)));
+    this.invulnTimerMs = 2200;
+    this.powerUpPulseMs = 850;
+    this.ultimatePoseTimerMs = 680;
+
+    this.callbacks.onHeroSkill3Ultimate?.(this);
+    return true;
   }
 
   public consumeChargeEnergy(amount: number, hardStop = false): void {
@@ -804,6 +929,7 @@ export class Warrior {
     this.consecutiveHitsTaken = 0;
     this.consecutiveHitResetMs = 0;
     this.statusShoutTimerMs = 0;
+    this.ultimatePoseTimerMs = 0;
     this.powerUpPulseMs = 0;
     this.invulnTimerMs = 0;
     this.hurtFlashTimerMs = 0;
@@ -811,6 +937,8 @@ export class Warrior {
     this.comboWindowTimerMs = 0;
     this.bufferedAttack = null;
     this.specialCooldownMs = 0;
+    this.skill2CooldownMs = 0;
+    this.skill3CooldownMs = 0;
     this.whiteDragonTimerMs = 0;
     this.cycloneTimerMs = 0;
     this.cancelAttack();
@@ -839,6 +967,9 @@ export class Warrior {
     if (this.invulnTimerMs > 0) this.invulnTimerMs = Math.max(0, this.invulnTimerMs - deltaMs);
     if (this.hurtFlashTimerMs > 0) this.hurtFlashTimerMs = Math.max(0, this.hurtFlashTimerMs - deltaMs);
     if (this.specialCooldownMs > 0) this.specialCooldownMs = Math.max(0, this.specialCooldownMs - deltaMs);
+    if (this.skill2CooldownMs > 0) this.skill2CooldownMs = Math.max(0, this.skill2CooldownMs - deltaMs);
+    if (this.skill3CooldownMs > 0) this.skill3CooldownMs = Math.max(0, this.skill3CooldownMs - deltaMs);
+    if (this.ultimatePoseTimerMs > 0) this.ultimatePoseTimerMs = Math.max(0, this.ultimatePoseTimerMs - deltaMs);
     if (this.guardBlockFlashMs > 0) this.guardBlockFlashMs = Math.max(0, this.guardBlockFlashMs - deltaMs);
     if (this.powerUpPulseMs > 0) this.powerUpPulseMs = Math.max(0, this.powerUpPulseMs - deltaMs);
 
@@ -959,7 +1090,6 @@ export class Warrior {
           this.dizzyTimerMs = this.pendingDizzyMs;
           this.pendingDizzyMs = 0;
           this.invulnTimerMs = 450;
-          this.showShout('어질어질! (연타!)', '#fde047', 1200);
           this.callbacks.onHeroDizzy?.(this);
         } else {
           this.bodyState = 'NORMAL';
@@ -970,7 +1100,7 @@ export class Warrior {
       return;
     }
 
-    // 0D. Dizzy State (어질어질! — wobbling with spinning stars; key mashing shakes it off!)
+    // 0D. Expressive Dizzy State (@_@ spiral eyes, hunched knees buckling, swaying & orbiting stars!)
     if (this.bodyState === 'DIZZY') {
       this.guardShieldSprite?.setVisible(false);
       this.vx *= Math.exp(-10 * dt);
@@ -980,17 +1110,37 @@ export class Warrior {
       const moveShave = input.isMoving ? deltaMs * 0.45 : 0;
       this.dizzyTimerMs -= deltaMs + mashShave + moveShave;
 
-      if (this.sprite.texture.key !== this.baseSheetKey) {
+      const dizzyFrameIdx =
+        this.heroId === 'zhaoyun'
+          ? 0
+          : this.heroId === 'guanyu'
+            ? 1
+            : this.heroId === 'zhangfei'
+              ? 2
+              : 3;
+      if (this.scene.textures.exists('hero_dizzy_poses')) {
+        if (this.sprite.texture.key !== 'hero_dizzy_poses') {
+          this.sprite.setTexture('hero_dizzy_poses', dizzyFrameIdx);
+        } else {
+          this.sprite.setFrame(dizzyFrameIdx);
+        }
+      } else if (this.sprite.texture.key !== this.baseSheetKey) {
         this.sprite.setTexture(this.baseSheetKey, this.heroId === 'zhaoyun' ? 2 : 0);
       }
-      const baseS = this.heroId === 'zhaoyun' ? this.zhaoYunDirScale : this.customSheetScale;
-      this.dizzyPhase += dt * 7.5;
-      this.sprite.setScale(baseS, baseS);
-      this.sprite.rotation = Math.sin(this.dizzyPhase) * 0.18;
-      this.sprite.x = Math.cos(this.dizzyPhase) * 3.5;
-      this.sprite.y = 6;
-      this.sprite.setTint(0xfef08a);
-      this.drawDizzyStars(dt, 1.0);
+
+      this.dizzyPhase += dt * 7.2;
+      const sway = Math.sin(this.dizzyPhase);
+      const kneeBuckle = Math.abs(Math.cos(this.dizzyPhase * 0.85));
+      this.sprite.setFlipX(false);
+      this.sprite.setScale(
+        this.customSheetScale * (1.03 + kneeBuckle * 0.05),
+        this.customSheetScale * (0.96 - kneeBuckle * 0.06),
+      );
+      this.sprite.rotation = sway * 0.16;
+      this.sprite.x = sway * 5.0;
+      this.sprite.y = 8 + kneeBuckle * 3.5;
+      this.sprite.clearTint();
+      this.drawDizzyStars(dt, 1.12);
 
       if (this.dizzyTimerMs <= 0) {
         this.bodyState = 'NORMAL';
@@ -999,7 +1149,6 @@ export class Warrior {
         this.sprite.rotation = 0;
         this.sprite.clearTint();
         this.dizzyGfx.clear();
-        this.showShout('정신 번쩍!', '#86efac', 550);
       }
       this.syncTransform();
       return;
@@ -1423,6 +1572,9 @@ export class Warrior {
 
     if (this.hurtFlashTimerMs > 0) {
       this.sprite.setTintFill(0xffffff);
+    } else if (this.ultimatePoseTimerMs > 0) {
+      const flash = Math.floor(this.ultimatePoseTimerMs / 75) % 2 === 0;
+      this.sprite.setTint(flash ? 0xfef08a : this.profile.accentHex);
     } else if (this.powerUpPulseMs > 0 && Math.floor(this.powerUpPulseMs / 80) % 2 === 0) {
       this.sprite.setTint(0xfef08a);
     } else if (this.chargePhase === 'ANTICIPATION') {
@@ -1439,10 +1591,38 @@ export class Warrior {
       this.sprite.clearTint();
     }
 
-    if (this.invulnTimerMs > 0 && this.hurtFlashTimerMs <= 0 && this.bodyState !== 'GUARDING') {
+    if (
+      this.invulnTimerMs > 0 &&
+      this.hurtFlashTimerMs <= 0 &&
+      this.ultimatePoseTimerMs <= 0 &&
+      this.bodyState !== 'GUARDING'
+    ) {
       this.container.setAlpha(Math.floor(this.invulnTimerMs / 60) % 2 === 0 ? 1 : 0.48);
     } else {
       this.container.setAlpha(1);
+    }
+
+    // Heroic Elemental Skill / Emergency Escape Ultimate Pose ("짜잔!")
+    if (this.ultimatePoseTimerMs > 0 && !this.isCarrying) {
+      const pop = 1.16 + Math.sin(this.ultimatePoseTimerMs * 0.024) * 0.05;
+      const faceLeft = Math.cos(this.facingAngle) < -0.15;
+      if (this.heroId === 'zhaoyun') {
+        this.sprite.setTexture('zhaoyun_actions', ZHAOYUN_ACTION_FRAME.WHIRLWIND);
+        this.sprite.setScale(this.zhaoYunActionScale * pop);
+      } else if (this.heroId === 'guanyu') {
+        this.sprite.setTexture('guanyu_sheet', GUANYU_FRAME.HEAVY);
+        this.sprite.setScale(this.customSheetScale * pop);
+      } else if (this.heroId === 'zhangfei') {
+        this.sprite.setTexture('zhangfei_sheet', ZHANGFEI_FRAME.CHARGE_ROAR);
+        this.sprite.setScale(this.customSheetScale * pop);
+      } else {
+        this.sprite.setTexture('huangzhong_sheet', HUANGZHONG_FRAME.BURST);
+        this.sprite.setScale(this.customSheetScale * pop);
+      }
+      this.sprite.setFlipX(faceLeft);
+      this.sprite.rotation = 0;
+      this.sprite.y = -4;
+      return;
     }
 
     // Guard Shield Dome (16-bit translucent energy shield!)

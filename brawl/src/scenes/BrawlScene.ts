@@ -463,6 +463,13 @@ export class BrawlScene extends Phaser.Scene {
         const inp = heroInputs.get(hero.heroId);
         if (!inp) continue;
 
+        // Skill 3 Emergency Escape Ultimate can break DIZZY / KNOCKDOWN / surrounds!
+        if (inp.skill3Pressed && !hero.isDefeated) {
+          hero.triggerSkill3Ultimate(inp);
+        }
+        if (inp.skill2Pressed && !hero.isIncapacitated) {
+          hero.triggerSkill2(inp);
+        }
         if (inp.specialPressed && !hero.isIncapacitated) {
           hero.triggerSpecial(inp);
         }
@@ -616,6 +623,9 @@ export class BrawlScene extends Phaser.Scene {
           hp: h.hp,
           maxHp: h.maxHp,
           specialReadyRatio: h.specialReadyRatio,
+          skill2ReadyRatio: h.skill2ReadyRatio,
+          skill3ReadyRatio: h.skill3ReadyRatio,
+          isLowHpEmergency: h.isLowHpEmergency,
           isDefeated: h.isDefeated,
           treasureCount: h.acquiredTreasures.length,
         })),
@@ -1187,6 +1197,8 @@ export class BrawlScene extends Phaser.Scene {
           this.vfx.spawnPowerUpVfx(h.x, h.y, h.profile.accentHex);
           this.spawnShockwave(h.x, h.y, 0xfde047, 155);
         },
+        onHeroSkill2: (h, dx, dy) => this.executeHeroSkill2(h, dx, dy),
+        onHeroSkill3Ultimate: (h) => this.executeHeroSkill3Ultimate(h),
         onHeroDefeated: () => {
           this.screenShake.trigger(7.5, 200);
         },
@@ -1194,6 +1206,298 @@ export class BrawlScene extends Phaser.Scene {
     );
     this.heroes.push(hero);
     return hero;
+  }
+
+  /**
+   * Skill 2 ([B] / [2]): Each hero's unique Elemental Signature Art!
+   * - 조운: 창해수룡파 (Tidal Water Dragon Wave + water puddle)
+   * - 관우: 청룡낙뢰참 (5x Sky Thunder Bolts striking nearby enemies)
+   * - 장비: 사자후 화염진 (Exploding Ring of Inferno Fire Pillars)
+   * - 황충: 유성화우 (Meteor Fire Arrow Rain volley from the sky)
+   */
+  private executeHeroSkill2(hero: Warrior, dirX: number, dirY: number): void {
+    const baseDmg = Math.round(
+      32 *
+        this.tuning.playerDamageMultiplier *
+        hero.profile.damageMultiplier *
+        hero.heroMods.damageMultiplier *
+        this.step5Tuning.heroDamageMultiplier,
+    );
+
+    switch (hero.heroId) {
+      case 'zhaoyun': {
+        // 창해수룡파 — Surging Water Dragon Wave forward + creates slippery water puddle!
+        this.audio.playStrongWhoosh();
+        this.audio.playBarrelBreak(true);
+        this.vfx.spawnWaterDragonWave(hero.x, hero.y, dirX, dirY, false);
+        this.screenShake.trigger(5.2, 140, dirX, dirY);
+        this.spawnHazard('water_puddle', hero.x + dirX * 125, hero.y + dirY * 85);
+
+        const query = {
+          originX: hero.x,
+          originY: hero.y,
+          dirX,
+          dirY,
+          range: 245,
+          halfWidth: 88,
+          verticalRatio: PERSPECTIVE_CONFIG.verticalMoveRatio,
+          backGrace: 20,
+        };
+        let hits = 0;
+        for (const b of this.bandits) {
+          if (!b.isVulnerable) continue;
+          if (!check25DMeleeHit(query, b.getHurtbox()).hit) continue;
+          if (
+            b.takeHit(
+              {
+                damage: baseDmg,
+                dirX,
+                dirY,
+                knockbackForce: 450,
+                launchVz: 265,
+                isHeavy: true,
+              },
+              this.coordinator,
+            )
+          ) {
+            hits += 1;
+            this.registerComboHit();
+            this.vfx.spawnHitImpact(b.x, b.y, b.elevationZ, dirX, dirY, 'HEAVY', baseDmg, hero.powerTier);
+          }
+        }
+        if (this.boss && this.boss.isAlive) {
+          const d = Math.hypot(this.boss.x - hero.x, (this.boss.y - hero.y) / PERSPECTIVE_CONFIG.verticalMoveRatio);
+          if (d <= 245) this.damageBoss(baseDmg, dirX, dirY, 420, true);
+        }
+        if (hits >= 3) this.stageDirector.recordMultiHit(hits);
+        this.kickNearbyWreckage(hero.x + dirX * 110, hero.y + dirY * 70, 145, 310, dirX, dirY, 240);
+        break;
+      }
+
+      case 'guanyu': {
+        // 청룡낙뢰참 — Calls down 5 Azure-Gold Sky Lightning Bolts onto nearby enemies!
+        this.audio.playGuandaoSweep();
+        this.audio.playBossHeavySlam();
+        this.screenShake.trigger(6.2, 180, 0, 1);
+
+        const targets: Array<{ x: number; y: number }> = [];
+        const sortedBandits = [...this.bandits]
+          .filter((b) => b.isVulnerable)
+          .sort(
+            (a, b) =>
+              Math.hypot(a.x - hero.x, a.y - hero.y) - Math.hypot(b.x - hero.x, b.y - hero.y),
+          );
+        for (const b of sortedBandits.slice(0, 5)) {
+          targets.push({ x: b.x, y: b.y });
+        }
+        if (this.boss && this.boss.isAlive && targets.length < 5) {
+          targets.push({ x: this.boss.x, y: this.boss.y });
+        }
+        while (targets.length < 5) {
+          const ang = (targets.length / 5) * Math.PI * 2;
+          targets.push({
+            x: hero.x + Math.cos(ang) * 145,
+            y: hero.y + Math.sin(ang) * 95,
+          });
+        }
+
+        targets.forEach((pt, idx) => {
+          this.time.delayedCall(idx * 75, () => {
+            this.vfx.spawnThunderStrikeBolt(pt.x, pt.y, false);
+            this.audio.playHeavyImpact();
+            this.applyElementalAoEDamage(hero, pt.x, pt.y, 92, baseDmg, 380, 250, true);
+          });
+        });
+        break;
+      }
+
+      case 'zhangfei': {
+        // 사자후 화염진 — Roaring Ring of Erupting Inferno Fire Pillars!
+        this.audio.playZhangFeiRoar();
+        this.audio.playBossHeavySlam();
+        const radius = 195;
+        this.vfx.spawnInfernoFirePillars(hero.x, hero.y, radius, false);
+        this.screenShake.trigger(7.5, 200, 0, 1);
+        this.hitStop.trigger(40, 'HEAVY');
+        this.broadcastFearWave(hero.x, hero.y, 380, 42);
+        this.kickNearbyWreckage(hero.x, hero.y, radius * 1.2, 360, 0, 0, 275);
+        this.applyElementalAoEDamage(hero, hero.x, hero.y, radius, Math.round(baseDmg * 1.15), 480, 295, true);
+        break;
+      }
+
+      case 'huangzhong': {
+        // 유성화우 — Rains 6 Blazing Meteor Fire Arrows onto forward target zone!
+        this.audio.playArrowBurst();
+        const centerX = hero.x + dirX * 195;
+        const centerY = hero.y + dirY * 120;
+        for (let i = 0; i < 6; i++) {
+          const ang = (i / 6) * Math.PI * 2;
+          const r = i === 0 ? 0 : 75 + (i % 2) * 35;
+          const tx = centerX + Math.cos(ang) * r;
+          const ty = centerY + Math.sin(ang) * r * 0.65;
+          this.time.delayedCall(i * 70, () => {
+            this.vfx.spawnPhoenixSolarStorm(tx, ty, false);
+            this.audio.playArrowHit();
+            this.applyElementalAoEDamage(hero, tx, ty, 88, Math.round(baseDmg * 0.92), 340, 230, false);
+          });
+        }
+        break;
+      }
+    }
+  }
+
+  /**
+   * Skill 3 ([N] / [3]): Hero-unique Emergency Escape Elemental Ultimate ("짜잔!!").
+   * Breaks DIZZY/KNOCKDOWN/surrounds, restores +22% grit HP, grants 2.2s invulnerability,
+   * and unleashes a massive elemental cataclysm unique to each hero!
+   */
+  private executeHeroSkill3Ultimate(hero: Warrior): void {
+    const ultDmg = Math.round(
+      52 *
+        this.tuning.playerDamageMultiplier *
+        hero.profile.damageMultiplier *
+        hero.heroMods.damageMultiplier *
+        this.step5Tuning.heroDamageMultiplier,
+    );
+
+    this.audio.playPowerUpBurst();
+    this.audio.playBossHeavySlam();
+    this.hitStop.trigger(55, 'ENV_MAJOR');
+    this.screenShake.trigger(9.5, 290);
+    this.broadcastFearWave(hero.x, hero.y, 480, 58);
+
+    const flashCol =
+      hero.heroId === 'zhaoyun'
+        ? 0x38bdf8
+        : hero.heroId === 'guanyu'
+          ? 0x4ade80
+          : hero.heroId === 'zhangfei'
+            ? 0xf97316
+            : 0xfacc15;
+    this.vfx.spawnUltimateDramaticFlash(hero.x, hero.y, flashCol);
+    this.kickNearbyWreckage(hero.x, hero.y, 290, 440, 0, 0, 320);
+
+    switch (hero.heroId) {
+      case 'zhaoyun': {
+        // 천수룡 강림 — Celestial Water-Ice Dragon Vortex clearing the whole arena around Zhao Yun!
+        this.audio.playBarrelBreak(true);
+        this.vfx.spawnWaterDragonWave(hero.x, hero.y, 0, 0, true);
+        this.spawnHazard('water_puddle', hero.x - 85, hero.y + 18);
+        this.spawnHazard('water_puddle', hero.x + 85, hero.y - 18);
+        this.applyElementalAoEDamage(hero, hero.x, hero.y, 285, ultDmg, 560, 330, true);
+        break;
+      }
+
+      case 'guanyu': {
+        // 뇌신 청룡강림 — 8-Bolt Thunder God Lightning Storm around Guan Yu!
+        this.audio.playCycloneSpin();
+        this.vfx.spawnThunderStrikeBolt(hero.x, hero.y, true);
+        this.applyElementalAoEDamage(hero, hero.x, hero.y, 275, ultDmg, 540, 320, true);
+        for (let i = 0; i < 8; i++) {
+          const ang = (i / 8) * Math.PI * 2;
+          const bx = hero.x + Math.cos(ang) * 165;
+          const by = hero.y + Math.sin(ang) * 105;
+          this.time.delayedCall(60 + i * 45, () => {
+            this.vfx.spawnThunderStrikeBolt(bx, by, true);
+            this.applyElementalAoEDamage(hero, bx, by, 105, Math.round(ultDmg * 0.55), 420, 260, false);
+          });
+        }
+        break;
+      }
+
+      case 'zhangfei': {
+        // 폭염 화산폭발 — Giant Volcano Inferno Eruption sending every bandit sky-high!
+        this.audio.playZhangFeiRoar();
+        this.vfx.spawnInfernoFirePillars(hero.x, hero.y, 295, true);
+        this.applyElementalAoEDamage(hero, hero.x, hero.y, 295, Math.round(ultDmg * 1.12), 620, 370, true);
+        this.time.delayedCall(190, () => {
+          this.vfx.spawnInfernoFirePillars(hero.x, hero.y, 230, true);
+        });
+        break;
+      }
+
+      case 'huangzhong': {
+        // 구천 봉황폭격 — Blazing Golden Phoenix Wings + 16-Arrow 360° Penetrating Solar Volley!
+        this.audio.playArrowBurst();
+        this.vfx.spawnPhoenixSolarStorm(hero.x, hero.y, true);
+        this.applyElementalAoEDamage(hero, hero.x, hero.y, 240, ultDmg, 510, 290, true);
+        const arrowCount = 16;
+        for (let i = 0; i < arrowCount; i++) {
+          const ang = (i / arrowCount) * Math.PI * 2;
+          this.spawnArrowProjectile({
+            hero,
+            x: hero.x + Math.cos(ang) * 26,
+            y: hero.y + Math.sin(ang) * 18,
+            dirX: Math.cos(ang),
+            dirY: Math.sin(ang),
+            penetrating: true,
+            isBurst: true,
+          });
+        }
+        break;
+      }
+    }
+  }
+
+  private applyElementalAoEDamage(
+    hero: Warrior,
+    originX: number,
+    originY: number,
+    radius: number,
+    damage: number,
+    knockbackForce: number,
+    launchVz: number,
+    staggersBoss: boolean,
+  ): void {
+    let hits = 0;
+    for (const bandit of this.bandits) {
+      if (!bandit.isVulnerable) continue;
+      const dx = bandit.x - originX;
+      const dy = (bandit.y - originY) / PERSPECTIVE_CONFIG.verticalMoveRatio;
+      const d = Math.hypot(dx, dy);
+      if (d > radius + bandit.collisionRadius) continue;
+
+      const nx = d > 0.1 ? dx / d : 1;
+      const ny = d > 0.1 ? dy / d : 0;
+      if (
+        bandit.takeHit(
+          {
+            damage,
+            dirX: nx,
+            dirY: ny,
+            knockbackForce: knockbackForce * hero.heroMods.knockbackMultiplier,
+            launchVz,
+            isHeavy: true,
+          },
+          this.coordinator,
+        )
+      ) {
+        hits += 1;
+        this.registerComboHit();
+        this.vfx.spawnHitImpact(
+          bandit.x,
+          bandit.y,
+          bandit.elevationZ,
+          nx,
+          ny,
+          'HEAVY',
+          damage,
+          hero.powerTier,
+        );
+      }
+    }
+
+    if (this.boss && this.boss.isAlive) {
+      const dx = this.boss.x - originX;
+      const dy = (this.boss.y - originY) / PERSPECTIVE_CONFIG.verticalMoveRatio;
+      const d = Math.hypot(dx, dy);
+      if (d <= radius + this.boss.collisionRadius) {
+        this.damageBoss(damage, dx / (d || 1), dy / (d || 1), staggersBoss ? 500 : 320, staggersBoss);
+        hits += 1;
+      }
+    }
+
+    if (hits >= 3) this.stageDirector.recordMultiHit(hits);
   }
 
   private handleJoinInProgress(deviceId: string): void {
@@ -2118,17 +2422,16 @@ export class BrawlScene extends Phaser.Scene {
   }
 
   private spawnInitialEnvironment(): void {
-    // Rear courtyard (near fortress gate, tents & palisades)
+    // Rear courtyard (aligned with backY=286 courtyard line for cohesive 2.5D perspective)
     const rearProps: Array<[EnvObjectKind, number, number]> = [
-      ['ceramic_jar', 420, 252],
-      ['barrel_empty', 495, 258],
-      ['table', 585, 268],
-      ['ceramic_jar', 695, 254],
-      ['table', 790, 270],
-      ['barrel_water', 885, 260],
-      ['barrel_empty', 955, 268],
-      ['fruit_basket', 465, 305],
-      ['fruit_basket', 845, 305],
+      ['ceramic_jar', 330, 298],
+      ['barrel_empty', 435, 302],
+      ['table', 565, 308],
+      ['ceramic_jar', 695, 298],
+      ['table', 815, 308],
+      ['barrel_water', 935, 302],
+      ['fruit_basket', 475, 336],
+      ['fruit_basket', 855, 336],
     ];
 
     // Mid-courtyard (main tavern & market stalls — spacious enough for 2x tables!)
