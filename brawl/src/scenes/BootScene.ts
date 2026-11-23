@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { generateStep4Sprites } from '../graphics/Step4SpriteFactory';
 import { generateStep5Sprites } from '../graphics/Step5SpriteFactory';
+import { generateStep6Sprites } from '../graphics/Step6SpriteFactory';
 
 export class BootScene extends Phaser.Scene {
   constructor() {
@@ -34,6 +35,7 @@ export class BootScene extends Phaser.Scene {
     this.generateParticleTextures();
     generateStep4Sprites(this);
     generateStep5Sprites(this);
+    generateStep6Sprites(this);
     this.scene.start('BrawlScene');
   }
 

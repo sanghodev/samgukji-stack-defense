@@ -177,9 +177,14 @@ export class Bandit {
       0.4,
     );
 
-    // Elite uses armored frame 1; others use cute blue-uniformed bandit frame 0
-    const spriteFrame = archetype === 'elite' ? 1 : 0;
-    this.sprite = scene.add.sprite(0, 4, 'enemies_4types', spriteFrame);
+    // Elite uses dedicated Step 6 darker-armored elite_bandit_sheet; others use blue-uniformed bandit
+    const useEliteSheet = archetype === 'elite' && scene.textures.exists('elite_bandit_sheet');
+    this.sprite = scene.add.sprite(
+      0,
+      4,
+      useEliteSheet ? 'elite_bandit_sheet' : 'enemies_4types',
+      useEliteSheet ? 0 : 0,
+    );
     this.sprite.setOrigin(0.5, 0.9);
     this.sprite.setScale(this.baseSpriteScale);
 
@@ -366,6 +371,34 @@ export class Bandit {
     this.state = 'APPROACH';
     this.reactionText.setVisible(false);
     this.telegraphText.setVisible(false);
+  }
+
+  /** Prevents hiding/fleeing bandits from stalling wave completion indefinitely. */
+  public flushFromCoverOrFlee(coordinator: CombatCoordinator): void {
+    if (this.isNeutralized || this.state === 'CAMERA_GAGGED') return;
+    if (
+      this.state === 'HIDING' ||
+      this.state === 'PEEKING' ||
+      this.state === 'MOVING_TO_COVER' ||
+      this.state === 'FLEE'
+    ) {
+      this.releaseCurrentCover();
+      if (this.fear >= 55 || this.hp <= this.maxHp * 0.45) {
+        this.enterSurrendered(coordinator);
+      } else {
+        this.state = 'APPROACH';
+        this.reactionText.setText('에라 모르겠다!');
+        this.reactionText.setColor('#fb923c');
+        this.reactionText.setVisible(true);
+      }
+    }
+  }
+
+  /** Used when the Bandit Chief is defeated so remaining bandits hilariously surrender! */
+  public forceSurrender(coordinator: CombatCoordinator): void {
+    if (this.isNeutralized || this.state === 'CAMERA_GAGGED') return;
+    this.releaseCurrentCover();
+    this.enterSurrendered(coordinator);
   }
 
   public onCoverDestroyed(coordinator: CombatCoordinator): void {

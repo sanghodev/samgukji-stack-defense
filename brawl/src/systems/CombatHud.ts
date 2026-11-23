@@ -11,6 +11,7 @@ export interface HeroHudCardData {
   maxHp: number;
   specialReadyRatio: number;
   isDefeated: boolean;
+  treasureCount?: number;
 }
 
 export interface CombatHudSnapshot {
@@ -20,6 +21,10 @@ export interface CombatHudSnapshot {
   enemiesNeutralized: number;
   enemiesSurrendered: number;
   comboHits: number;
+  waveNumber?: number;
+  totalWaves?: number;
+  score?: number;
+  suppressBuiltInDefeat?: boolean;
 }
 
 interface HeroCardNodes {
@@ -251,7 +256,8 @@ export class CombatHud implements IGameSystem {
       node.bg.strokeRoundedRect(0, 0, cardW, cardH, 6);
 
       const tag = data.control === 'HUMAN' ? `P${data.slotIndex + 1}` : 'AI';
-      node.nameText.setText(`[${tag}] ${prof.displayName}`);
+      const trBadge = data.treasureCount && data.treasureCount > 0 ? ` ★${data.treasureCount}` : '';
+      node.nameText.setText(`[${tag}] ${prof.displayName}${trBadge}`);
       node.nameText.setColor(prof.accentColor);
       node.hpText.setText(`${data.hp}/${data.maxHp}`);
 
@@ -285,9 +291,9 @@ export class CombatHud implements IGameSystem {
       node.spText.setColor(spReady ? '#fde047' : '#94a3b8');
     }
 
-    this.counterText?.setText(
-      `제압: ${snap.enemiesNeutralized} | 항복: ${snap.enemiesSurrendered} | 산적: ${snap.enemiesActive}`,
-    );
+    const waveStr = snap.waveNumber ? `W${snap.waveNumber}/${snap.totalWaves ?? 5} · ` : '';
+    const scoreStr = snap.score !== undefined ? `${snap.score.toLocaleString()}점 · ` : '';
+    this.counterText?.setText(`${waveStr}${scoreStr}적:${snap.enemiesActive}`);
 
     if (this.comboText) {
       if (snap.comboHits >= 2) {
@@ -311,8 +317,9 @@ export class CombatHud implements IGameSystem {
     }
 
     if (this.statusOverlay && this.statusSub) {
-      this.statusOverlay.setVisible(snap.allHumansDefeated);
-      if (snap.allHumansDefeated) {
+      const showOld = snap.allHumansDefeated && !snap.suppressBuiltInDefeat;
+      this.statusOverlay.setVisible(showOld);
+      if (showOld) {
         this.statusSub.setText(`제압한 산적: ${snap.enemiesNeutralized}명 · R 키로 즉시 재시작`);
       }
     }

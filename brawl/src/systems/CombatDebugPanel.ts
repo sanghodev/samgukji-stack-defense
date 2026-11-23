@@ -26,11 +26,22 @@ export interface CombatDebugPanelActions {
   onResetSpecialCooldowns: () => void;
   onResetRoom: () => void;
   onTuningChanged: () => void;
+  // Step 6 Stage, Boss & Treasure Tools
+  onJumpToWave?: (waveIndex: number) => void;
+  onSpawnBoss?: () => void;
+  onDamageBoss?: (pct: number) => void;
+  onForceBossEnraged?: () => void;
+  onGrantNextTreasure?: () => void;
+  onOpenTreasureSelection?: () => void;
+  onResetTemporaryUpgrades?: () => void;
+  onForceVictory?: () => void;
+  onForceDefeat?: () => void;
+  onReturnMainMenu?: () => void;
 }
 
 /**
- * Toggleable developer tuning panel (F2) covering Step 2-5:
- * Party / AI Cooperation / Local Multiplayer / Treasure Hooks / Zhang Fei Charge / Camera Gag.
+ * Toggleable developer tuning panel (F2) covering Step 2-6:
+ * Stage Director / Boss / Treasure Evolution / Party / AI / Local Multiplayer.
  */
 export class CombatDebugPanel implements IGameSystem {
   public readonly id = 'combat-debug-panel';
@@ -41,6 +52,7 @@ export class CombatDebugPanel implements IGameSystem {
   private readonly step5: Step5Tuning;
   private readonly actions: CombatDebugPanelActions;
   private root?: HTMLDivElement;
+  private stageStatusEl?: HTMLDivElement;
   private visible = false;
 
   constructor(
@@ -57,6 +69,12 @@ export class CombatDebugPanel implements IGameSystem {
     this.actions = actions;
   }
 
+  public updateStageStatus(text: string): void {
+    if (this.stageStatusEl && this.visible) {
+      this.stageStatusEl.textContent = text;
+    }
+  }
+
   public init(): void {
     if (typeof document === 'undefined') return;
 
@@ -66,7 +84,7 @@ export class CombatDebugPanel implements IGameSystem {
       'position: fixed',
       'top: 12px',
       'right: 12px',
-      'width: 320px',
+      'width: 326px',
       'max-height: calc(100vh - 24px)',
       'overflow-y: auto',
       'background: rgba(11, 16, 27, 0.94)',
@@ -86,7 +104,7 @@ export class CombatDebugPanel implements IGameSystem {
     header.style.cssText =
       'display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;padding-bottom:6px;border-bottom:1px solid rgba(148,163,184,0.25);';
     header.innerHTML =
-      '<strong style="color:#fde047;font-size:12px;">⚔ STEP 5 DEV PANEL [F2]</strong>';
+      '<strong style="color:#fde047;font-size:12px;">⚔ STEP 6 STAGE DEV PANEL [F2]</strong>';
 
     const closeBtn = document.createElement('button');
     closeBtn.textContent = '✕';
@@ -95,6 +113,41 @@ export class CombatDebugPanel implements IGameSystem {
     closeBtn.onclick = () => this.setVisible(false);
     header.appendChild(closeBtn);
     panel.appendChild(header);
+
+    // ===== STEP 6: STAGE 1, BOSS & TREASURE TOOLS =====
+    this.addSectionTitle(panel, 'STAGE 1 DIRECTOR, BOSS & TREASURE (STEP 6)');
+
+    const statusLine = document.createElement('div');
+    statusLine.style.cssText =
+      'background:#0f172a;border:1px solid #334155;border-radius:5px;padding:5px 7px;margin-bottom:6px;color:#7dd3fc;font-size:10px;line-height:1.4;';
+    statusLine.textContent = 'STATE: PREPARATION';
+    panel.appendChild(statusLine);
+    this.stageStatusEl = statusLine;
+
+    const waveRow = document.createElement('div');
+    waveRow.style.cssText = 'display:grid;grid-template-columns:repeat(5,1fr);gap:3px;margin-bottom:6px;';
+    for (let w = 0; w < 5; w++) {
+      waveRow.appendChild(
+        this.makeButton(`W${w + 1}`, w === 4 ? '#991b1b' : '#1e3a8a', () =>
+          this.actions.onJumpToWave?.(w),
+        ),
+      );
+    }
+    panel.appendChild(waveRow);
+
+    const s6Btns = document.createElement('div');
+    s6Btns.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;gap:5px;margin-bottom:8px;';
+    s6Btns.appendChild(this.makeButton('Spawn Elite', '#b45309', () => this.actions.onSpawnBandit('elite')));
+    s6Btns.appendChild(this.makeButton('Spawn Boss', '#991b1b', () => this.actions.onSpawnBoss?.()));
+    s6Btns.appendChild(this.makeButton('Boss HP -35%', '#7f1d1d', () => this.actions.onDamageBoss?.(0.35)));
+    s6Btns.appendChild(this.makeButton('Boss Enraged!', '#dc2626', () => this.actions.onForceBossEnraged?.()));
+    s6Btns.appendChild(this.makeButton('Grant Treasure', '#ca8a04', () => this.actions.onGrantNextTreasure?.()));
+    s6Btns.appendChild(this.makeButton('Treasure Modal', '#d97706', () => this.actions.onOpenTreasureSelection?.()));
+    s6Btns.appendChild(this.makeButton('Reset Upgrades', '#475569', () => this.actions.onResetTemporaryUpgrades?.()));
+    s6Btns.appendChild(this.makeButton('Main Menu', '#334155', () => this.actions.onReturnMainMenu?.()));
+    s6Btns.appendChild(this.makeButton('Force Victory', '#15803d', () => this.actions.onForceVictory?.()));
+    s6Btns.appendChild(this.makeButton('Force Defeat', '#7f1d1d', () => this.actions.onForceDefeat?.()));
+    panel.appendChild(s6Btns);
 
     // ===== STEP 5: PARTY, AI & LOCAL MULTIPLAYER =====
     this.addSectionTitle(panel, 'PARTY, AI & MULTIPLAYER (STEP 5)');

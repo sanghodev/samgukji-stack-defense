@@ -22,11 +22,12 @@ export interface ProjectileConfig {
   maxRange: number;
   radius: number;
   tint?: number;
+  textureKey?: string;
 }
 
 /**
- * True 2.5D world-space projectile (Huang Zhong's arrows & heavy penetrating shots).
- * Tracks prevX/prevY for swept collision so fast arrows never tunnel and only hit
+ * True 2.5D world-space projectile (Huang Zhong's arrows & Guan Yu's green wind blades).
+ * Tracks prevX/prevY for swept collision so fast projectiles never tunnel and only hit
  * targets in their actual 2.5D depth lane.
  */
 export class Projectile {
@@ -78,7 +79,7 @@ export class Projectile {
     this.vy = this.dirY * cfg.speed * PERSPECTIVE_CONFIG.verticalMoveRatio;
 
     this.shadow = scene.add.ellipse(0, 2, 22, 6, 0x1a120b, 0.28);
-    this.sprite = scene.add.image(0, -26, 'arrow_projectile');
+    this.sprite = scene.add.image(0, -26, cfg.textureKey ?? 'arrow_projectile');
     this.sprite.setOrigin(0.5);
     this.sprite.setRotation(Math.atan2(this.vy, this.vx));
     if (cfg.tint) {

@@ -9,6 +9,12 @@ import {
   Step5Tuning,
 } from '../config/heroConfig';
 import { Step4Tuning } from '../config/step4Config';
+import {
+  ComputedHeroModifiers,
+  computeHeroModifiers,
+  createBaseHeroModifiers,
+  TREASURE_BY_ID,
+} from '../config/treasureConfig';
 import { CombatHitTracker, MeleeHitboxQuery } from '../core/CombatMath';
 import {
   clampToArena,
@@ -149,6 +155,10 @@ export class Warrior {
   public chargeCurrentSpeed = 0;
   public specialCooldownMs = 0;
   public specialMaxCooldownMs: number;
+
+  // Step 6 Per-Hero Treasure Evolution State
+  public readonly acquiredTreasures: string[] = [];
+  public heroMods: ComputedHeroModifiers = createBaseHeroModifiers();
 
   // Zhao Yun White Dragon Rush (백룡연격) & Guan Yu Cyclone (청룡선풍참)
   private whiteDragonTimerMs = 0;
@@ -349,6 +359,49 @@ export class Warrior {
     }
   }
 
+  public addTreasure(treasureId: string): boolean {
+    const def = TREASURE_BY_ID.get(treasureId);
+    if (!def) return false;
+    if (def.heroId !== 'ANY' && def.heroId !== this.heroId) return false;
+    if (treasureId !== 'shared_peach' && this.acquiredTreasures.includes(treasureId)) {
+      return false;
+    }
+    this.acquiredTreasures.push(treasureId);
+    this.heroMods = computeHeroModifiers(this.acquiredTreasures);
+
+    const newMaxHp = this.profile.maxHp + this.heroMods.maxHpBonus;
+    const hpDiff = Math.max(0, newMaxHp - this.maxHp);
+    this.maxHp = newMaxHp;
+    if (hpDiff > 0) this.hp = Math.min(this.maxHp, this.hp + hpDiff);
+    if (def.modifiers.healAmount) {
+      this.heal(def.modifiers.healAmount);
+    }
+    return true;
+  }
+
+  public resetTreasures(): void {
+    this.acquiredTreasures.length = 0;
+    this.heroMods = createBaseHeroModifiers();
+    this.maxHp = this.profile.maxHp;
+    this.hp = Math.min(this.hp, this.maxHp);
+  }
+
+  public heal(amount: number): void {
+    if (this.isDefeated) return;
+    this.hp = Math.min(this.maxHp, this.hp + Math.max(0, Math.round(amount)));
+  }
+
+  public revive(hpRatio = 0.55): void {
+    if (!this.isDefeated) return;
+    this.isDefeated = false;
+    this.hp = Math.max(20, Math.round(this.maxHp * hpRatio));
+    this.invulnTimerMs = 1500;
+    this.sprite.rotation = 0;
+    this.sprite.y = 6;
+    this.container.setAlpha(1);
+    this.syncTransform();
+  }
+
   public triggerSpecial(input: HeroActionInput, ignoreCooldown = false): boolean {
     if (this.isDefeated || this.isCharging || this.whiteDragonTimerMs > 0 || this.cycloneTimerMs > 0) {
       return false;
@@ -368,10 +421,11 @@ export class Warrior {
       this.setFacingToward(input.x, input.y);
     }
 
-    const cd =
+    const baseCd =
       this.heroId === 'zhangfei'
         ? this.step4.chargeCooldownMs
         : this.profile.specialCooldownMs;
+    const cd = Math.round(baseCd * this.heroMods.specialCooldownMultiplier);
     this.specialMaxCooldownMs = cd;
     this.specialCooldownMs = this.step4.chargeNoCooldown ? 0 : cd;
 
@@ -391,19 +445,21 @@ export class Warrior {
       }
 
       case 'zhaoyun': {
-        // 백룡연격 (White Dragon Rush — rapid forward dash + 3 consecutive spear strikes!)
+        // 백룡연격 (White Dragon Rush — rapid forward dash + multi-strikes!)
         this.whiteDragonDirX = Math.cos(this.facingAngle);
         this.whiteDragonDirY = Math.sin(this.facingAngle);
-        this.whiteDragonStrikesLeft = 3 + Math.max(0, this.step5.treasureMods.extraStrikes);
-        this.whiteDragonTimerMs = this.whiteDragonStrikesLeft * 95 + 60;
+        this.whiteDragonStrikesLeft =
+          3 + Math.max(0, this.step5.treasureMods.extraStrikes) + this.heroMods.specialExtraHits;
+        this.whiteDragonTimerMs = this.whiteDragonStrikesLeft * 90 + 60;
         this.whiteDragonStrikeTickMs = 0;
         return true;
       }
 
       case 'guanyu': {
         // 청룡선풍참 (Azure Dragon Cyclone — wide sweeping emerald cyclone pulses!)
-        this.cycloneTimerMs = 420;
-        this.cyclonePulsesLeft = 3;
+        const pulses = 3 + this.heroMods.specialExtraHits;
+        this.cyclonePulsesLeft = pulses;
+        this.cycloneTimerMs = pulses * 135 + 40;
         this.cyclonePulseTickMs = 0;
         return true;
       }
@@ -446,7 +502,8 @@ export class Warrior {
     this.carriedObject = null;
     const dirX = Math.cos(this.facingAngle);
     const dirY = Math.sin(this.facingAngle);
-    obj.throwInDirection(dirX, dirY, throwForce * (this.heroId === 'zhangfei' ? 1.12 : 1.0));
+    const mult = (this.heroId === 'zhangfei' ? 1.12 : 1.0) * this.heroMods.throwPowerMultiplier;
+    obj.throwInDirection(dirX, dirY, throwForce * mult);
     return obj;
   }
 
@@ -480,20 +537,24 @@ export class Warrior {
   public getActiveHitbox(): MeleeHitboxQuery | null {
     if (!this.isHitboxActive || !this.currentAttack) return null;
     const prof = this.profile;
+    const heavyBonus = this.currentAttack.isHeavy ? 1 + this.heroMods.heavyPierceBonus : 1;
     return {
       originX: this.x,
       originY: this.y,
       dirX: this.attackDirX,
       dirY: this.attackDirY,
       range:
-        (this.currentAttack.range * prof.rangeMultiplier + this.step5.treasureMods.extraReach) *
+        (this.currentAttack.range * prof.rangeMultiplier * heavyBonus +
+          this.step5.treasureMods.extraReach +
+          this.heroMods.extraReach) *
         this.tuning.attackRangeMultiplier,
       halfWidth:
         this.currentAttack.halfWidth *
         prof.widthMultiplier *
+        this.heroMods.attackArcMultiplier *
         this.tuning.attackRangeMultiplier,
       verticalRatio: PERSPECTIVE_CONFIG.verticalMoveRatio,
-      backGrace: this.heroId === 'guanyu' ? 22 : 14,
+      backGrace: this.heroId === 'guanyu' ? 24 : 14,
     };
   }
 
@@ -790,7 +851,10 @@ export class Warrior {
         this.dustCooldownMs -= deltaMs;
       }
 
-      const maxDist = this.step4.chargeMaxDistance * this.step5.treasureMods.chargeDistanceMul;
+      const maxDist =
+        this.step4.chargeMaxDistance *
+        this.step5.treasureMods.chargeDistanceMul *
+        this.heroMods.chargeDistanceMultiplier;
       if (hitBoundary || this.chargeDistanceTraveled >= maxDist || this.chargeEnergy <= 0) {
         this.enterChargeRecovery();
       }
@@ -836,7 +900,8 @@ export class Warrior {
       0.4,
       this.tuning.attackSpeedMultiplier *
         this.profile.attackSpeedMultiplier *
-        this.step5.heroAttackSpeedMultiplier,
+        this.step5.heroAttackSpeedMultiplier *
+        this.heroMods.attackSpeedMultiplier,
     );
 
     if (this.attackPhase === 'NONE') {
@@ -856,17 +921,29 @@ export class Warrior {
       this.hitTracker.beginAttack();
 
       if (this.profile.isRanged) {
-        // Huang Zhong fires a 2.5D arrow (normal or heavy penetrating!)
-        this.callbacks.onFireArrow({
-          hero: this,
-          x: this.x + this.attackDirX * 22,
-          y: this.y + this.attackDirY * 14,
-          dirX: this.attackDirX,
-          dirY: this.attackDirY,
-          penetrating: this.currentAttack.isHeavy,
-          isBurst: false,
-        });
+        // Huang Zhong fires 1, 2, or 3 2.5D arrows depending on Treasure Evolution!
+        const arrowCount = Math.min(3, 1 + this.heroMods.extraProjectileCount);
+        const baseAngle = Math.atan2(this.attackDirY, this.attackDirX);
+        const spreadStep = this.heroMods.arrowSpreadWide ? 0.19 : 0.13;
+        const penetrating = this.currentAttack.isHeavy || this.heroMods.piercingBasicArrows;
+
+        for (let i = 0; i < arrowCount; i++) {
+          const offset = (i - (arrowCount - 1) / 2) * spreadStep;
+          const a = baseAngle + offset;
+          this.callbacks.onFireArrow({
+            hero: this,
+            x: this.x + Math.cos(a) * 22,
+            y: this.y + Math.sin(a) * 14,
+            dirX: Math.cos(a),
+            dirY: Math.sin(a),
+            penetrating,
+            isBurst: false,
+          });
+        }
       } else {
+        const range =
+          (this.currentAttack.range * this.profile.rangeMultiplier + this.heroMods.extraReach) *
+          this.tuning.attackRangeMultiplier;
         this.callbacks.onAttackActiveStart(
           this,
           this.currentAttack.type,
@@ -874,9 +951,7 @@ export class Warrior {
           this.y,
           this.attackDirX,
           this.attackDirY,
-          this.currentAttack.range *
-            this.profile.rangeMultiplier *
-            this.tuning.attackRangeMultiplier,
+          range,
         );
       }
       return;
@@ -929,16 +1004,20 @@ export class Warrior {
       attackType = 'HEAVY';
       this.comboStep = 0;
     } else if (this.profile.isRanged) {
-      // Huang Zhong fires crisp continuous shots without clunky slow finisher locks
       attackType = 'LIGHT_1';
       this.comboStep = 0;
     } else {
+      const extraHits = this.heroMods.comboExtraHit;
       if (this.comboStep === 0) {
         attackType = 'LIGHT_1';
         this.comboStep = 1;
       } else if (this.comboStep === 1) {
         attackType = 'LIGHT_2';
         this.comboStep = 2;
+      } else if (this.comboStep === 2 && extraHits > 0) {
+        // Extra fast combo strike unlocked by Zhao Yun Tier 1 / Guan Yu Tier 2!
+        attackType = 'LIGHT_2';
+        this.comboStep = 3;
       } else {
         attackType = 'LIGHT_3';
         this.comboStep = 0;

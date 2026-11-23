@@ -342,5 +342,239 @@ test('Party balance profile scales enemy count and HP smoothly from 1 to 4 heroe
   assert.ok(p1.enemyHpMultiplier < p4.enemyHpMultiplier);
 });
 
+// ==================== STEP 6 — STAGE 1, TREASURE EVOLUTION & PERSISTENCE TESTS ====================
+import { getStageDifficultyProfile, SeededRng } from '../src/config/stage1Config.ts';
+import { computeHeroModifiers, rollTreasureChoices } from '../src/config/treasureConfig.ts';
+import { PersistentProgressStore } from '../src/core/PersistentProgress.ts';
+import { StageDirector } from '../src/core/StageDirector.ts';
+
+test('StageDirector completes full 5-wave progression to Boss Victory without double-triggering', () => {
+  const dir = new StageDirector(1, 0, 4242); // Solo 1H+0AI
+  assert.equal(dir.state, 'PREPARATION');
+  dir.startIntro();
+  assert.equal(dir.state, 'INTRO');
+
+  const w1Start = dir.finishIntroAndBeginStage();
+  assert.equal(w1Start.stateChangedTo, 'WAVE_START');
+  assert.equal(dir.waveIndex, 0);
+
+  // Step through waves 1..4
+  for (let expectedWave = 0; expectedWave < 4; expectedWave++) {
+    assert.equal(dir.waveIndex, expectedWave);
+    // Advance WAVE_START -> WAVE_ACTIVE
+    for (let i = 0; i < 20; i++) {
+      dir.step({
+        deltaMs: 100,
+        activeNonNeutralizedEnemies: 0,
+        activeBossAlive: false,
+        bossSpawned: false,
+        aliveHeroCount: 1,
+        heroPositions: [{ x: 640, y: 520 }],
+      });
+      if (dir.state === 'WAVE_ACTIVE') break;
+    }
+    assert.equal(dir.state, 'WAVE_ACTIVE');
+
+    // Drain all spawns in this wave
+    let totalSpawned = 0;
+    for (let i = 0; i < 200; i++) {
+      const r = dir.step({
+        deltaMs: 100,
+        activeNonNeutralizedEnemies: 0,
+        activeBossAlive: false,
+        bossSpawned: false,
+        aliveHeroCount: 1,
+        heroPositions: [{ x: 640, y: 520 }],
+      });
+      totalSpawned += r.spawns.length;
+      if (dir.state === 'WAVE_CLEARED') break;
+    }
+    assert.ok(totalSpawned >= 4, `Wave ${expectedWave + 1} should spawn bandits`);
+    assert.equal(dir.state, 'WAVE_CLEARED');
+
+    // Advance WAVE_CLEARED -> either TREASURE_REWARD or next WAVE_START
+    for (let i = 0; i < 20; i++) {
+      dir.step({
+        deltaMs: 100,
+        activeNonNeutralizedEnemies: 0,
+        activeBossAlive: false,
+        bossSpawned: false,
+        aliveHeroCount: 1,
+        heroPositions: [{ x: 640, y: 520 }],
+      });
+      if (dir.state !== 'WAVE_CLEARED') break;
+    }
+    if (dir.state === 'TREASURE_REWARD') {
+      dir.finishTreasureReward();
+    }
+  }
+
+  // Now on Wave 5 (Boss Wave)
+  assert.equal(dir.waveIndex, 4);
+  let bossSpawnRequested = false;
+  for (let i = 0; i < 50; i++) {
+    const r = dir.step({
+      deltaMs: 100,
+      activeNonNeutralizedEnemies: 0,
+      activeBossAlive: false,
+      bossSpawned: false,
+      aliveHeroCount: 1,
+      heroPositions: [{ x: 640, y: 520 }],
+    });
+    if (r.shouldSpawnBoss) bossSpawnRequested = true;
+    if (dir.state === 'BOSS_ACTIVE') break;
+  }
+  assert.equal(bossSpawnRequested, true);
+  assert.equal(dir.state, 'BOSS_ACTIVE');
+
+  // Boss defeated -> VICTORY
+  const win = dir.step({
+    deltaMs: 100,
+    activeNonNeutralizedEnemies: 2,
+    activeBossAlive: false,
+    bossSpawned: true,
+    aliveHeroCount: 1,
+    heroPositions: [{ x: 640, y: 520 }],
+  });
+  assert.equal(win.stateChangedTo, 'VICTORY');
+  assert.equal(dir.state, 'VICTORY');
+
+  // Victory must never trigger twice
+  const winAgain = dir.triggerVictory();
+  assert.equal(winAgain.stateChangedTo, undefined);
+});
+
+test('StageDirector anti-stall flushes hiding bandits and triggers DEFEAT when all heroes fall', () => {
+  const dir = new StageDirector(1, 0, 1001);
+  dir.finishIntroAndBeginStage();
+  dir.remainingSpawnsInWave = 0;
+  // Transition to WAVE_ACTIVE
+  for (let i = 0; i < 20; i++) {
+    dir.step({
+      deltaMs: 100,
+      activeNonNeutralizedEnemies: 1,
+      activeBossAlive: false,
+      bossSpawned: false,
+      aliveHeroCount: 1,
+      heroPositions: [{ x: 640, y: 520 }],
+    });
+  }
+  dir.remainingSpawnsInWave = 0;
+
+  let flushed = false;
+  for (let i = 0; i < 60; i++) {
+    const r = dir.step({
+      deltaMs: 100,
+      activeNonNeutralizedEnemies: 1,
+      activeBossAlive: false,
+      bossSpawned: false,
+      aliveHeroCount: 1,
+      heroPositions: [{ x: 640, y: 520 }],
+    });
+    if (r.shouldFlushHidingBandits) {
+      flushed = true;
+      break;
+    }
+  }
+  assert.equal(flushed, true, 'Anti-stall should flush hiding bandits after 5s');
+
+  // All heroes defeated -> DEFEAT
+  const loss = dir.step({
+    deltaMs: 100,
+    activeNonNeutralizedEnemies: 1,
+    activeBossAlive: false,
+    bossSpawned: false,
+    aliveHeroCount: 0,
+    heroPositions: [],
+  });
+  assert.equal(loss.stateChangedTo, 'DEFEAT');
+  assert.equal(dir.state, 'DEFEAT');
+});
+
+test('Party-size difficulty scaling covers 1H+0AI through 4H+0AI smoothly', () => {
+  const solo = getStageDifficultyProfile(1, 0);
+  const duo = getStageDifficultyProfile(2, 0);
+  const trio = getStageDifficultyProfile(2, 1);
+  const quad = getStageDifficultyProfile(4, 0);
+
+  assert.ok(solo.maxSimultaneousEnemies >= 6 && solo.maxSimultaneousEnemies <= 8);
+  assert.ok(duo.maxSimultaneousEnemies >= 9 && duo.maxSimultaneousEnemies <= 12);
+  assert.ok(trio.maxSimultaneousEnemies >= 12 && trio.maxSimultaneousEnemies <= 16);
+  assert.ok(quad.maxSimultaneousEnemies >= 16 && quad.maxSimultaneousEnemies <= 20);
+  assert.ok(solo.bossHp < duo.bossHp && duo.bossHp < trio.bossHp && trio.bossHp < quad.bossHp);
+});
+
+test('5-Tier Hero Treasure Evolution stacks predictably with safety clamps for all 4 heroes', () => {
+  // Huang Zhong full 5-tier evolution
+  const hzMods = computeHeroModifiers(['hz_t1', 'hz_t2', 'hz_t3', 'hz_t4', 'hz_t5']);
+  assert.equal(hzMods.extraProjectileCount, 2); // 1 base + 2 = 3 arrows max
+  assert.equal(hzMods.arrowSpreadWide, true);
+  assert.equal(hzMods.piercingBasicArrows, true);
+  assert.equal(hzMods.burstExtraArrows, 6);
+  assert.ok(hzMods.attackSpeedMultiplier > 1.2);
+
+  // Guan Yu full 5-tier evolution
+  const gyMods = computeHeroModifiers(['gy_t1', 'gy_t2', 'gy_t3', 'gy_t4', 'gy_t5']);
+  assert.equal(gyMods.heavyWindProjectile, true);
+  assert.ok(gyMods.cycloneRadiusMultiplier >= 1.35);
+  assert.equal(gyMods.comboExtraHit, 1);
+
+  // Zhang Fei full 5-tier evolution
+  const zfMods = computeHeroModifiers(['zf_t1', 'zf_t2', 'zf_t3', 'zf_t4', 'zf_t5']);
+  assert.equal(zfMods.chargeFinalShockwave, true);
+  assert.ok(zfMods.chargeDistanceMultiplier >= 1.35);
+  assert.ok(zfMods.throwPowerMultiplier >= 1.45);
+
+  // Zhao Yun roller always prioritizes next evolution tier
+  const rng = new SeededRng(999);
+  const c1 = rollTreasureChoices('zhaoyun', [], rng);
+  assert.equal(c1.length, 3);
+  assert.equal(c1[0].id, 'zy_t1');
+  const c2 = rollTreasureChoices('zhaoyun', ['zy_t1'], rng);
+  assert.equal(c2[0].id, 'zy_t2');
+});
+
+test('PersistentProgressStore handles corrupted storage gracefully and separates permanent unlocks', () => {
+  const mem = new Map<string, string>();
+  mem.set('tkm_stage1_progress_v1', '{CORRUPTED_JSON!!!');
+  const fakeStorage = {
+    getItem: (k: string) => mem.get(k) ?? null,
+    setItem: (k: string, v: string) => {
+      mem.set(k, v);
+    },
+  };
+
+  const store = new PersistentProgressStore(fakeStorage);
+  assert.equal(store.snapshot.bestScore, 0);
+  assert.equal(store.snapshot.totalClears, 0);
+
+  const res = store.recordStage1Victory(5400, 185000);
+  assert.equal(res.isNewBestScore, true);
+  assert.equal(res.newlyUnlockedId, 'fire_ember');
+  assert.equal(store.hasPermanentAbility('fire_ember'), true);
+  assert.ok(store.getPermanentDamageBonus() > 0 && store.getPermanentDamageBonus() <= 0.05);
+
+  // Reloading from storage preserves best score and permanent unlock
+  const reloaded = new PersistentProgressStore(fakeStorage);
+  assert.equal(reloaded.snapshot.bestScore, 5400);
+  assert.equal(reloaded.snapshot.fastestClearMs, 185000);
+  assert.equal(reloaded.hasPermanentAbility('fire_ember'), true);
+});
+
+test('Mayhem scoring deduplicates chain collision IDs and SeededRng varies runs cleanly', () => {
+  const dir = new StageDirector(1, 3, 777);
+  assert.equal(dir.recordChainCollision('chain_evt_1', 3), true);
+  assert.equal(dir.recordChainCollision('chain_evt_1', 3), false); // Duplicate rejected!
+  assert.equal(dir.stats.longestChain, 3);
+  assert.equal(dir.stats.totalScore, 225);
+
+  const rngA = new SeededRng(101);
+  const rngB = new SeededRng(202);
+  const seqA = [rngA.int(1, 100), rngA.int(1, 100), rngA.int(1, 100)];
+  const seqB = [rngB.int(1, 100), rngB.int(1, 100), rngB.int(1, 100)];
+  assert.notDeepEqual(seqA, seqB);
+});
+
+
 
 

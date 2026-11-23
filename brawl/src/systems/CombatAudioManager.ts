@@ -48,7 +48,20 @@ type SoundChannel =
   | 'hz_bow'
   | 'hz_arrow_hit'
   | 'hz_burst'
-  | 'zy_dragon_strike';
+  | 'zy_dragon_strike'
+  | 'stage_open'
+  | 'wave_warning'
+  | 'elite_entrance'
+  | 'boss_entrance'
+  | 'boss_slam'
+  | 'boss_roar'
+  | 'boss_stagger'
+  | 'boss_defeat'
+  | 'treasure_pickup'
+  | 'upgrade_confirm'
+  | 'combo_milestone'
+  | 'victory_fanfare'
+  | 'defeat_sting';
 
 /**
  * Procedural Web Audio API combat & environmental chaos sound engine.
@@ -596,6 +609,193 @@ export class CombatAudioManager implements IAudioSystem {
     this.playTone(dest, now, 'triangle', 760 * p, 340 * p, 0.09, 0.26);
   }
 
+  // ==================== STEP 6 STAGE, BOSS, TREASURE & ADAPTIVE BGM ====================
+
+  private musicIntensity: 'CALM' | 'WAVE_LIGHT' | 'WAVE_INTENSE' | 'BOSS' | 'VICTORY' | 'DEFEAT' = 'CALM';
+  private bgmStepTimerMs = 0;
+  private bgmStepIndex = 0;
+
+  public setMusicIntensity(
+    intensity: 'CALM' | 'WAVE_LIGHT' | 'WAVE_INTENSE' | 'BOSS' | 'VICTORY' | 'DEFEAT',
+  ): void {
+    if (this.musicIntensity !== intensity) {
+      this.musicIntensity = intensity;
+      this.bgmStepTimerMs = 0;
+      this.bgmStepIndex = 0;
+    }
+  }
+
+  public updateAdaptiveBgm(deltaMs: number): void {
+    if (!this.ctx || this.ctx.state !== 'running' || !this.combatGain) return;
+    if (this.tuning.audioVolume <= 0.001) return;
+    if (
+      this.musicIntensity === 'CALM' ||
+      this.musicIntensity === 'VICTORY' ||
+      this.musicIntensity === 'DEFEAT'
+    ) {
+      return;
+    }
+
+    const stepMs =
+      this.musicIntensity === 'BOSS'
+        ? 185
+        : this.musicIntensity === 'WAVE_INTENSE'
+          ? 220
+          : 270;
+
+    this.bgmStepTimerMs += Math.min(deltaMs, 60);
+    if (this.bgmStepTimerMs < stepMs) return;
+    this.bgmStepTimerMs -= stepMs;
+
+    const now = this.ctx.currentTime;
+    // Chinese pentatonic arcade bass & light percussion (kept quiet so impact SFX dominate!)
+    const scale =
+      this.musicIntensity === 'BOSS'
+        ? [110, 130.8, 146.8, 164.8, 196, 146.8, 130.8, 110]
+        : [146.8, 164.8, 196, 220, 293.7, 220, 196, 164.8];
+    const freq = scale[this.bgmStepIndex % scale.length];
+    const accent = this.bgmStepIndex % 4 === 0;
+
+    this.playTone(
+      this.combatGain,
+      now,
+      this.musicIntensity === 'BOSS' ? 'sawtooth' : 'triangle',
+      freq,
+      freq * 0.98,
+      stepMs * 0.00075,
+      accent ? 0.048 : 0.03,
+    );
+
+    if (accent || (this.musicIntensity !== 'WAVE_LIGHT' && this.bgmStepIndex % 2 === 0)) {
+      this.playTone(this.combatGain, now, 'sine', accent ? 105 : 150, 42, 0.08, accent ? 0.06 : 0.035);
+    }
+
+    this.bgmStepIndex = (this.bgmStepIndex + 1) % 16;
+  }
+
+  public playStageOpen(): void {
+    const dest = this.beginPlay('stage_open', 250, 'combat');
+    if (!dest) return;
+    const now = this.ctx!.currentTime;
+    // War drum + pentatonic gong
+    this.playTone(dest, now, 'sine', 130, 44, 0.28, 0.55);
+    this.playTone(dest, now + 0.08, 'triangle', 392, 587.3, 0.26, 0.28);
+    this.playFilteredNoise(dest, now + 0.08, 0.22, 1800, 600, 1.2, 0.25);
+  }
+
+  public playWaveWarning(): void {
+    const dest = this.beginPlay('wave_warning', 250, 'combat');
+    if (!dest) return;
+    const now = this.ctx!.currentTime;
+    this.playTone(dest, now, 'triangle', 293.7, 392, 0.14, 0.28);
+    this.playTone(dest, now + 0.12, 'triangle', 392, 587.3, 0.18, 0.32);
+  }
+
+  public playEliteEntrance(): void {
+    const dest = this.beginPlay('elite_entrance', 300, 'combat');
+    if (!dest) return;
+    const now = this.ctx!.currentTime;
+    this.playTone(dest, now, 'sawtooth', 165, 82, 0.24, 0.36);
+    this.playTone(dest, now + 0.06, 'triangle', 880, 440, 0.22, 0.24);
+  }
+
+  public playBossEntrance(): void {
+    const dest = this.beginPlay('boss_entrance', 400, 'combat');
+    if (!dest) return;
+    const now = this.ctx!.currentTime;
+    for (let i = 0; i < 3; i++) {
+      const t = now + i * 0.18;
+      this.playTone(dest, t, 'sine', 120 - i * 10, 34, 0.22, 0.65);
+    }
+    this.playTone(dest, now + 0.42, 'sawtooth', 140, 65, 0.35, 0.42);
+  }
+
+  public playBossHeavySlam(): void {
+    const dest = this.beginPlay('boss_slam', 120, 'combat');
+    if (!dest) return;
+    const now = this.ctx!.currentTime;
+    this.playTone(dest, now, 'sine', 135, 28, 0.34, 0.85);
+    this.playFilteredNoise(dest, now, 0.22, 1400, 240, 0.9, 0.68);
+  }
+
+  public playBossRoar(): void {
+    const dest = this.beginPlay('boss_roar', 300, 'combat');
+    if (!dest) return;
+    const now = this.ctx!.currentTime;
+    this.playTone(dest, now, 'sawtooth', 190, 78, 0.38, 0.45);
+    this.playFilteredNoise(dest, now, 0.34, 900, 320, 1.5, 0.36);
+  }
+
+  public playBossStagger(): void {
+    const dest = this.beginPlay('boss_stagger', 200, 'combat');
+    if (!dest) return;
+    const now = this.ctx!.currentTime;
+    this.playTone(dest, now, 'triangle', 520, 180, 0.18, 0.42);
+    this.playTone(dest, now + 0.08, 'sine', 240, 640, 0.16, 0.28);
+  }
+
+  public playBossDefeat(): void {
+    const dest = this.beginPlay('boss_defeat', 500, 'combat');
+    if (!dest) return;
+    const now = this.ctx!.currentTime;
+    this.playTone(dest, now, 'sine', 150, 26, 0.45, 0.9);
+    this.playFilteredNoise(dest, now, 0.32, 2600, 300, 0.9, 0.72);
+    this.playTone(dest, now + 0.12, 'triangle', 740, 180, 0.38, 0.32);
+  }
+
+  public playTreasurePickup(): void {
+    const dest = this.beginPlay('treasure_pickup', 120, 'combat');
+    if (!dest) return;
+    const now = this.ctx!.currentTime;
+    const notes = [523.25, 659.25, 783.99, 1046.5];
+    notes.forEach((f, i) => {
+      this.playTone(dest, now + i * 0.055, 'triangle', f, f * 1.02, 0.14, 0.28);
+    });
+  }
+
+  public playUpgradeConfirm(): void {
+    const dest = this.beginPlay('upgrade_confirm', 150, 'combat');
+    if (!dest) return;
+    const now = this.ctx!.currentTime;
+    const notes = [440, 554.37, 659.25, 880];
+    notes.forEach((f, i) => {
+      this.playTone(dest, now + i * 0.05, 'triangle', f, f, 0.18, 0.32);
+    });
+  }
+
+  public playComboMilestone(): void {
+    const dest = this.beginPlay('combo_milestone', 220, 'combat');
+    if (!dest) return;
+    const now = this.ctx!.currentTime;
+    this.playTone(dest, now, 'triangle', 659.25, 987.77, 0.12, 0.26);
+  }
+
+  public playVictoryFanfare(): void {
+    const dest = this.beginPlay('victory_fanfare', 800, 'combat');
+    if (!dest) return;
+    const now = this.ctx!.currentTime;
+    const melody = [
+      { f: 523.25, t: 0, d: 0.12 },
+      { f: 659.25, t: 0.11, d: 0.12 },
+      { f: 783.99, t: 0.22, d: 0.14 },
+      { f: 1046.5, t: 0.36, d: 0.38 },
+    ];
+    for (const n of melody) {
+      this.playTone(dest, now + n.t, 'triangle', n.f, n.f, n.d, 0.36);
+      this.playTone(dest, now + n.t, 'sine', n.f * 0.5, n.f * 0.5, n.d, 0.22);
+    }
+  }
+
+  public playDefeatSting(): void {
+    const dest = this.beginPlay('defeat_sting', 800, 'combat');
+    if (!dest) return;
+    const now = this.ctx!.currentTime;
+    const notes = [392, 349.23, 311.13, 261.63];
+    notes.forEach((f, i) => {
+      this.playTone(dest, now + i * 0.16, 'sawtooth', f, f * 0.96, 0.22, 0.24);
+    });
+  }
+
   // ==================== INTERNAL AUDIO ENGINE ====================
 
   private beginPlay(
@@ -609,7 +809,6 @@ export class CombatAudioManager implements IAudioSystem {
         : this.tuning.audioVolume;
     if (vol <= 0.001) return null;
 
-    this.ensureUnlocked();
     if (!this.ctx || this.ctx.state !== 'running') return null;
 
     const dest = bus === 'env' ? this.envGain : this.combatGain;
