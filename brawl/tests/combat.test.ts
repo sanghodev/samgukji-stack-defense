@@ -272,4 +272,75 @@ test('Camera-glass gag enforces foreground trajectory, threshold, cooldown, and 
   assert.equal(evaluateCameraGagEligibility({ ...base, enabled: false }), false);
 });
 
+// ==================== STEP 5 FLEXIBLE PARTY & MULTIPLAYER TESTS ====================
+import { getPartyBalanceProfile } from '../src/config/heroConfig.ts';
+import { PartyManager } from '../src/core/PartyManager.ts';
+
+test('Flexible PartyManager supports 1H+0AI Solo with unused slots strictly EMPTY', () => {
+  const pm = new PartyManager();
+  pm.setPreset('SOLO');
+  assert.equal(pm.activeHeroCount, 1);
+  assert.equal(pm.humanPlayerCount, 1);
+  assert.equal(pm.aiSlots.length, 0);
+  assert.equal(pm.slots[1].control, 'EMPTY');
+  assert.equal(pm.slots[2].control, 'EMPTY');
+  assert.equal(pm.slots[3].control, 'EMPTY');
+});
+
+test('Flexible PartyManager supports 2H+0AI, 3H+1AI, and 4H+0AI without duplicate heroes', () => {
+  const pm = new PartyManager();
+  pm.setPreset('LOCAL_2P');
+  assert.equal(pm.activeHeroCount, 2);
+  assert.equal(pm.humanPlayerCount, 2);
+  assert.equal(pm.aiSlots.length, 0);
+
+  // Duplicate hero assignment must be rejected
+  assert.equal(pm.setSlot(2, 'HUMAN', 'zhaoyun', 'gamepad:1'), false);
+
+  // Valid 3H + 1AI setup
+  assert.equal(pm.setSlot(2, 'HUMAN', 'guanyu', 'gamepad:1'), true);
+  assert.equal(pm.setSlot(3, 'AI', 'huangzhong'), true);
+  assert.equal(pm.activeHeroCount, 4);
+  assert.equal(pm.humanPlayerCount, 3);
+  assert.equal(pm.aiSlots.length, 1);
+
+  pm.setPreset('LOCAL_4P');
+  assert.equal(pm.humanPlayerCount, 4);
+  assert.equal(pm.aiSlots.length, 0);
+});
+
+test('Join-in-progress spawns into EMPTY slot in Solo and takes over AI in Full Party, disconnect returns to AI', () => {
+  const solo = new PartyManager();
+  solo.setPreset('SOLO');
+  const joinedNew = solo.joinHuman('gamepad:0', 'zhangfei');
+  assert.equal(joinedNew.success, true);
+  assert.equal(joinedNew.mode, 'SPAWNED_NEW');
+  assert.equal(solo.activeHeroCount, 2);
+  assert.equal(solo.humanPlayerCount, 2);
+
+  // Disconnect safely returns Zhang Fei to AI without removing the hero
+  const left = solo.releaseHumanDevice('gamepad:0');
+  assert.equal(left.success, true);
+  assert.equal(left.mode, 'RETURNED_TO_AI');
+  assert.equal(solo.activeHeroCount, 2);
+  assert.equal(solo.humanPlayerCount, 1);
+  assert.equal(solo.aiSlots.length, 1);
+
+  // Joining again seamlessly takes over AI Zhang Fei
+  const rejoin = solo.joinHuman('gamepad:0', 'zhangfei');
+  assert.equal(rejoin.success, true);
+  assert.equal(rejoin.mode, 'TOOK_OVER_AI');
+  assert.equal(solo.humanPlayerCount, 2);
+});
+
+test('Party balance profile scales enemy count and HP smoothly from 1 to 4 heroes', () => {
+  const p1 = getPartyBalanceProfile(1);
+  const p2 = getPartyBalanceProfile(2);
+  const p3 = getPartyBalanceProfile(3);
+  const p4 = getPartyBalanceProfile(4);
+  assert.ok(p1.enemyCount < p2.enemyCount && p2.enemyCount < p3.enemyCount && p3.enemyCount < p4.enemyCount);
+  assert.ok(p1.enemyHpMultiplier < p4.enemyHpMultiplier);
+});
+
+
 

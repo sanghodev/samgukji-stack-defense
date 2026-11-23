@@ -42,7 +42,13 @@ type SoundChannel =
   | 'cam_whoosh'
   | 'cam_splat'
   | 'cam_squeak'
-  | 'cam_release';
+  | 'cam_release'
+  | 'gy_sweep'
+  | 'gy_cyclone'
+  | 'hz_bow'
+  | 'hz_arrow_hit'
+  | 'hz_burst'
+  | 'zy_dragon_strike';
 
 /**
  * Procedural Web Audio API combat & environmental chaos sound engine.
@@ -525,6 +531,69 @@ export class CombatAudioManager implements IAudioSystem {
     if (!dest) return;
     const now = this.ctx!.currentTime;
     this.playTone(dest, now, 'sine', 260, 120, 0.09, 0.26);
+  }
+
+  // ==================== STEP 5 HERO-SPECIFIC SOUNDS ====================
+
+  public playGuandaoSweep(): void {
+    const dest = this.beginPlay('gy_sweep', 70, 'combat');
+    if (!dest) return;
+    const now = this.ctx!.currentTime;
+    const p = this.vary(1.0, 0.07);
+    // Broad heavy crescent blade wind sweep
+    this.playFilteredNoise(dest, now, 0.19, 820 * p, 240 * p, 1.4, 0.52);
+    this.playTone(dest, now, 'triangle', 290 * p, 115 * p, 0.15, 0.28);
+  }
+
+  public playCycloneSpin(): void {
+    const dest = this.beginPlay('gy_cyclone', 140, 'combat');
+    if (!dest) return;
+    const now = this.ctx!.currentTime;
+    // Deep dragon-wind spinning blade cyclone!
+    this.playFilteredNoise(dest, now, 0.34, 1400, 320, 1.1, 0.62);
+    this.playTone(dest, now, 'sawtooth', 220, 440, 0.18, 0.22);
+    this.playTone(dest, now + 0.16, 'triangle', 440, 140, 0.2, 0.32);
+  }
+
+  public playBowRelease(): void {
+    const dest = this.beginPlay('hz_bow', 55, 'combat');
+    if (!dest) return;
+    const now = this.ctx!.currentTime;
+    const p = this.vary(1.0, 0.09);
+    // Crisp bowstring twang + arrow whistle!
+    this.playTone(dest, now, 'triangle', 540 * p, 190 * p, 0.08, 0.28);
+    this.playFilteredNoise(dest, now + 0.01, 0.09, 3200 * p, 1400 * p, 2.6, 0.26);
+  }
+
+  public playArrowHit(): void {
+    const dest = this.beginPlay('hz_arrow_hit', 35, 'combat');
+    if (!dest) return;
+    const now = this.ctx!.currentTime;
+    const p = this.vary(1.0, 0.09);
+    // Snappy piercing thwip-thunk!
+    this.playFilteredNoise(dest, now, 0.045, 2900 * p, 1100 * p, 1.8, 0.42);
+    this.playTone(dest, now, 'sine', 280 * p, 95 * p, 0.065, 0.36);
+  }
+
+  public playArrowBurst(): void {
+    const dest = this.beginPlay('hz_burst', 140, 'combat');
+    if (!dest) return;
+    const now = this.ctx!.currentTime;
+    // Multi-arrow rapid volley fanfare!
+    for (let i = 0; i < 3; i++) {
+      const t = now + i * 0.045;
+      this.playTone(dest, t, 'triangle', 620 + i * 90, 220, 0.075, 0.26);
+      this.playFilteredNoise(dest, t, 0.08, 3600, 1500, 2.2, 0.24);
+    }
+  }
+
+  public playWhiteDragonStrike(): void {
+    const dest = this.beginPlay('zy_dragon_strike', 55, 'combat');
+    if (!dest) return;
+    const now = this.ctx!.currentTime;
+    const p = this.vary(1.0, 0.08);
+    this.playFilteredNoise(dest, now, 0.09, 2800 * p, 900 * p, 1.8, 0.44);
+    this.playTone(dest, now, 'triangle', 760 * p, 340 * p, 0.09, 0.26);
   }
 
   // ==================== INTERNAL AUDIO ENGINE ====================

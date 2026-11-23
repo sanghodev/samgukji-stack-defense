@@ -1,4 +1,5 @@
 import { CombatTuning } from '../config/combatConfig';
+import { AiAggressionMode, HeroId, Step5Tuning } from '../config/heroConfig';
 import { EnvObjectKind, MayhemTuning } from '../config/mayhemConfig';
 import { BanditArchetype, Step4Tuning } from '../config/step4Config';
 import { IGameSystem } from './ModuleRegistry';
@@ -11,18 +12,25 @@ export interface CombatDebugPanelActions {
   onSpawnPuddle: () => void;
   onResetEnvironment: () => void;
   onClearDebris: () => void;
-  onTriggerChargeTest: () => void;
+  onTriggerSpecial: (heroId?: HeroId) => void;
   onForceEnemyPanic: () => void;
   onPreviewCameraGag: () => void;
   onResetAiStates: () => void;
   onSwitchHero: () => void;
+  onOpenPartySetup: () => void;
+  onForceAiToHuman: () => void;
+  onForceHumanToAi: () => void;
+  onSimulateGamepadDisconnect: () => void;
+  onTestFourPlayerInputs: () => void;
+  onResetHeroPositions: () => void;
+  onResetSpecialCooldowns: () => void;
   onResetRoom: () => void;
   onTuningChanged: () => void;
 }
 
 /**
- * Toggleable developer tuning panel (F2) covering Step 2 Combat, Step 3 Mayhem,
- * and Step 4 Zhang Fei Charge, Comedic AI, and Camera-Glass Gag controls.
+ * Toggleable developer tuning panel (F2) covering Step 2-5:
+ * Party / AI Cooperation / Local Multiplayer / Treasure Hooks / Zhang Fei Charge / Camera Gag.
  */
 export class CombatDebugPanel implements IGameSystem {
   public readonly id = 'combat-debug-panel';
@@ -30,6 +38,7 @@ export class CombatDebugPanel implements IGameSystem {
   private readonly tuning: CombatTuning;
   private readonly mayhem: MayhemTuning;
   private readonly step4: Step4Tuning;
+  private readonly step5: Step5Tuning;
   private readonly actions: CombatDebugPanelActions;
   private root?: HTMLDivElement;
   private visible = false;
@@ -38,11 +47,13 @@ export class CombatDebugPanel implements IGameSystem {
     tuning: CombatTuning,
     mayhem: MayhemTuning,
     step4: Step4Tuning,
+    step5: Step5Tuning,
     actions: CombatDebugPanelActions,
   ) {
     this.tuning = tuning;
     this.mayhem = mayhem;
     this.step4 = step4;
+    this.step5 = step5;
     this.actions = actions;
   }
 
@@ -55,12 +66,12 @@ export class CombatDebugPanel implements IGameSystem {
       'position: fixed',
       'top: 12px',
       'right: 12px',
-      'width: 316px',
+      'width: 320px',
       'max-height: calc(100vh - 24px)',
       'overflow-y: auto',
       'background: rgba(11, 16, 27, 0.94)',
       'color: #e2e8f0',
-      'border: 1px solid rgba(192, 132, 252, 0.72)',
+      'border: 1px solid rgba(56, 189, 248, 0.72)',
       'border-radius: 8px',
       'padding: 12px',
       'font-family: Consolas, Menlo, monospace',
@@ -75,7 +86,7 @@ export class CombatDebugPanel implements IGameSystem {
     header.style.cssText =
       'display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;padding-bottom:6px;border-bottom:1px solid rgba(148,163,184,0.25);';
     header.innerHTML =
-      '<strong style="color:#fde047;font-size:12px;">⚔ MAYHEM DEV PANEL [F2]</strong>';
+      '<strong style="color:#fde047;font-size:12px;">⚔ STEP 5 DEV PANEL [F2]</strong>';
 
     const closeBtn = document.createElement('button');
     closeBtn.textContent = '✕';
@@ -85,163 +96,137 @@ export class CombatDebugPanel implements IGameSystem {
     header.appendChild(closeBtn);
     panel.appendChild(header);
 
-    // ===== STEP 4: QUICK ACTIONS =====
-    this.addSectionTitle(panel, 'STEP 4 QUICK ACTIONS');
+    // ===== STEP 5: PARTY, AI & LOCAL MULTIPLAYER =====
+    this.addSectionTitle(panel, 'PARTY, AI & MULTIPLAYER (STEP 5)');
+
+    const s5Btns = document.createElement('div');
+    s5Btns.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;gap:5px;margin-bottom:8px;';
+    const partyBtn = this.makeButton('⚔ Party Setup (1~4P) [P]', '#d97706', () => this.actions.onOpenPartySetup());
+    partyBtn.style.gridColumn = 'span 2';
+    s5Btns.appendChild(partyBtn);
+
+    s5Btns.appendChild(this.makeButton('AI → Human Join', '#0284c7', () => this.actions.onForceAiToHuman()));
+    s5Btns.appendChild(this.makeButton('Human → AI Leave', '#475569', () => this.actions.onForceHumanToAi()));
+    s5Btns.appendChild(this.makeButton('Sim Pad Disconnect', '#991b1b', () => this.actions.onSimulateGamepadDisconnect()));
+    s5Btns.appendChild(this.makeButton('Test 4P Inputs', '#15803d', () => this.actions.onTestFourPlayerInputs()));
+    s5Btns.appendChild(this.makeButton('Reset Hero Pos', '#334155', () => this.actions.onResetHeroPositions()));
+    s5Btns.appendChild(this.makeButton('Reset Cooldowns', '#7e22ce', () => this.actions.onResetSpecialCooldowns()));
+    panel.appendChild(s5Btns);
+
+    // Test Each Hero Special
+    const spRow = document.createElement('div');
+    spRow.style.cssText = 'display:grid;grid-template-columns:repeat(4,1fr);gap:4px;margin-bottom:8px;';
+    spRow.appendChild(this.makeButton('조운 V', '#0284c7', () => this.actions.onTriggerSpecial('zhaoyun')));
+    spRow.appendChild(this.makeButton('관우 V', '#16a34a', () => this.actions.onTriggerSpecial('guanyu')));
+    spRow.appendChild(this.makeButton('장비 V', '#9333ea', () => this.actions.onTriggerSpecial('zhangfei')));
+    spRow.appendChild(this.makeButton('황충 V', '#ca8a04', () => this.actions.onTriggerSpecial('huangzhong')));
+    panel.appendChild(spRow);
+
+    // AI Aggression selector
+    const aggRow = document.createElement('div');
+    aggRow.style.cssText = 'display:flex;gap:4px;margin-bottom:6px;';
+    const modes: AiAggressionMode[] = ['PASSIVE', 'BALANCED', 'AGGRESSIVE'];
+    const modeBtns: HTMLButtonElement[] = [];
+    for (const m of modes) {
+      const b = this.makeButton(m, m === this.step5.aiAggression ? '#b45309' : '#1e293b', () => {
+        this.step5.aiAggression = m;
+        modeBtns.forEach((btn, idx) => {
+          btn.style.background = modes[idx] === m ? '#b45309' : '#1e293b';
+        });
+        this.actions.onTuningChanged();
+      });
+      b.style.flex = '1';
+      modeBtns.push(b);
+      aggRow.appendChild(b);
+    }
+    panel.appendChild(aggRow);
+
+    this.addCheckbox(panel, 'Disable AI Companions', () => this.step5.aiDisabled, (v) => {
+      this.step5.aiDisabled = v;
+    });
+    this.addCheckbox(panel, 'Friendly Fire (Co-op Default OFF)', () => this.step5.friendlyFire, (v) => {
+      this.step5.friendlyFire = v;
+    });
+    this.addCheckbox(panel, 'Show Projectile Collisions', () => this.step5.showProjectiles, (v) => {
+      this.step5.showProjectiles = v;
+    });
+    this.addCheckbox(panel, 'Show AI Target & Goals', () => this.step5.showAiGoals, (v) => {
+      this.step5.showAiGoals = v;
+    });
+
+    // Treasure Hook Modifiers (Step 5 Preview)
+    this.addSectionTitle(panel, 'TREASURE HOOK MODIFIERS');
+    this.addSlider(panel, 'Hero Damage Mul', 0.5, 2.5, 0.1, () => this.step5.heroDamageMultiplier, (v) => {
+      this.step5.heroDamageMultiplier = v;
+    }, (v) => `${v.toFixed(1)}x`);
+    this.addSlider(panel, 'Hero Attack Speed', 0.6, 1.8, 0.05, () => this.step5.heroAttackSpeedMultiplier, (v) => {
+      this.step5.heroAttackSpeedMultiplier = v;
+    }, (v) => `${v.toFixed(2)}x`);
+    this.addSlider(panel, 'Huang Zhong +Arrows', 0, 4, 2, () => this.step5.treasureMods.extraSpreadArrows, (v) => {
+      this.step5.treasureMods.extraSpreadArrows = Math.round(v);
+    }, (v) => `+${Math.round(v)}`);
+    this.addSlider(panel, 'Guan Yu Cyclone Size', 0.8, 1.8, 0.1, () => this.step5.treasureMods.cycloneRadiusMul, (v) => {
+      this.step5.treasureMods.cycloneRadiusMul = v;
+    }, (v) => `${v.toFixed(1)}x`);
+    this.addSlider(panel, 'Zhao Yun +Strikes', 0, 3, 1, () => this.step5.treasureMods.extraStrikes, (v) => {
+      this.step5.treasureMods.extraStrikes = Math.round(v);
+    }, (v) => `+${Math.round(v)}`);
+
+    // ===== STEP 4 QUICK ACTIONS =====
+    this.addSectionTitle(panel, 'STEP 4 AI, CHARGE & CAMERA GAG');
     const s4Btns = document.createElement('div');
     s4Btns.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;gap:5px;margin-bottom:6px;';
     s4Btns.appendChild(this.makeButton('Switch Hero [TAB]', '#7e22ce', () => this.actions.onSwitchHero()));
-    s4Btns.appendChild(this.makeButton('⚡ Test Charge [V]', '#9333ea', () => this.actions.onTriggerChargeTest()));
-    s4Btns.appendChild(this.makeButton('😱 Force Panic', '#0284c7', () => this.actions.onForceEnemyPanic()));
     s4Btns.appendChild(this.makeButton('💥 Camera Gag', '#db2777', () => this.actions.onPreviewCameraGag()));
-    s4Btns.appendChild(this.makeButton('+ Coward', '#0369a1', () => this.actions.onSpawnBandit('coward')));
-    s4Btns.appendChild(this.makeButton('+ Clumsy', '#c2410c', () => this.actions.onSpawnBandit('clumsy')));
-    s4Btns.appendChild(this.makeButton('+ Stubborn', '#991b1b', () => this.actions.onSpawnBandit('stubborn')));
-    s4Btns.appendChild(this.makeButton('+ Elite', '#b45309', () => this.actions.onSpawnBandit('elite')));
-    s4Btns.appendChild(this.makeButton('+ Cover Table', '#78350f', () => this.actions.onSpawnObject('table')));
+    s4Btns.appendChild(this.makeButton('😱 Force Panic', '#0284c7', () => this.actions.onForceEnemyPanic()));
     s4Btns.appendChild(this.makeButton('Reset AI States', '#475569', () => this.actions.onResetAiStates()));
+    s4Btns.appendChild(this.makeButton('+ Coward', '#0369a1', () => this.actions.onSpawnBandit('coward')));
+    s4Btns.appendChild(this.makeButton('+ Elite', '#b45309', () => this.actions.onSpawnBandit('elite')));
     panel.appendChild(s4Btns);
 
-    // ===== STEP 4: ZHANG FEI CHARGE =====
-    this.addSectionTitle(panel, 'ZHANG FEI CHARGE (맹장돌진)');
-    this.addSlider(panel, 'Charge Speed', 420, 960, 20, () => this.step4.chargeMaxSpeed, (v) => {
-      this.step4.chargeMaxSpeed = v;
-    }, (v) => `${Math.round(v)}`);
-    this.addSlider(panel, 'Charge Accel', 1200, 4200, 100, () => this.step4.chargeAcceleration, (v) => {
-      this.step4.chargeAcceleration = v;
-    }, (v) => `${Math.round(v)}`);
-    this.addSlider(panel, 'Charge Distance', 220, 760, 20, () => this.step4.chargeMaxDistance, (v) => {
-      this.step4.chargeMaxDistance = v;
-    }, (v) => `${Math.round(v)}`);
-    this.addSlider(panel, 'Charge Impulse', 280, 820, 20, () => this.step4.chargeKnockback, (v) => {
-      this.step4.chargeKnockback = v;
-    }, (v) => `${Math.round(v)}`);
-    this.addSlider(panel, 'Energy Loss/Hit', 5, 55, 1, () => this.step4.chargeEnergyLossPerHit, (v) => {
-      this.step4.chargeEnergyLossPerHit = v;
-    }, (v) => `${Math.round(v)}`);
-    this.addSlider(panel, 'Charge Recovery', 100, 520, 20, () => this.step4.chargeRecoveryMs, (v) => {
-      this.step4.chargeRecoveryMs = v;
-    }, (v) => `${Math.round(v)}ms`);
-    this.addSlider(panel, 'Charge Cooldown', 500, 8000, 250, () => this.step4.chargeCooldownMs, (v) => {
-      this.step4.chargeCooldownMs = v;
-    }, (v) => `${(v / 1000).toFixed(1)}s`);
-    this.addCheckbox(panel, 'Disable Charge Cooldown', () => this.step4.chargeNoCooldown, (v) => {
+    this.addCheckbox(panel, 'Disable Special Cooldowns', () => this.step4.chargeNoCooldown, (v) => {
       this.step4.chargeNoCooldown = v;
     });
-
-    // ===== STEP 4: ENEMY AI & FEAR =====
-    this.addSectionTitle(panel, 'COMEDIC ENEMY AI & FEAR');
-    this.addSlider(panel, 'Enemy Courage', 0.3, 2.0, 0.1, () => this.step4.enemyCourageMultiplier, (v) => {
-      this.step4.enemyCourageMultiplier = v;
-    }, (v) => `${v.toFixed(1)}x`);
-    this.addSlider(panel, 'Fear Gain', 0.2, 2.5, 0.1, () => this.step4.fearGainMultiplier, (v) => {
-      this.step4.fearGainMultiplier = v;
-    }, (v) => `${v.toFixed(1)}x`);
-    this.addSlider(panel, 'Panic Thresh Offset', -25, 25, 2, () => this.step4.panicThresholdOffset, (v) => {
-      this.step4.panicThresholdOffset = v;
-    }, (v) => `${v >= 0 ? '+' : ''}${Math.round(v)}`);
-    this.addSlider(panel, 'Fleeing Speed', 0.6, 1.8, 0.05, () => this.step4.fleeSpeedMultiplier, (v) => {
-      this.step4.fleeSpeedMultiplier = v;
-    }, (v) => `${v.toFixed(2)}x`);
-    this.addSlider(panel, 'Trip Probability', 0, 1.0, 0.05, () => this.step4.tripProbability, (v) => {
-      this.step4.tripProbability = v;
-    }, (v) => `${Math.round(v * 100)}%`);
-    this.addSlider(panel, 'Hiding Preference', 0, 1.8, 0.1, () => this.step4.hidingPreference, (v) => {
-      this.step4.hidingPreference = v;
-    }, (v) => `${v.toFixed(1)}x`);
-    this.addSlider(panel, 'Peek Interval', 600, 3500, 100, () => this.step4.peekIntervalMs, (v) => {
-      this.step4.peekIntervalMs = v;
-    }, (v) => `${(v / 1000).toFixed(1)}s`);
-    this.addSlider(panel, 'Surrender Offset', -25, 25, 2, () => this.step4.surrenderThresholdOffset, (v) => {
-      this.step4.surrenderThresholdOffset = v;
-    }, (v) => `${v >= 0 ? '+' : ''}${Math.round(v)}`);
-
-    // ===== STEP 4: CAMERA-GLASS GAG =====
-    this.addSectionTitle(panel, 'CAMERA-GLASS GAG');
+    this.addCheckbox(panel, 'Show Enemy AI State & Fear', () => this.step4.showAiDebug, (v) => {
+      this.step4.showAiDebug = v;
+    });
     this.addCheckbox(panel, 'Enable Camera Gag', () => this.step4.cameraGagEnabled, (v) => {
       this.step4.cameraGagEnabled = v;
     });
-    this.addSlider(panel, 'Launch Threshold', 200, 560, 20, () => this.step4.cameraGagLaunchThreshold, (v) => {
-      this.step4.cameraGagLaunchThreshold = v;
-    }, (v) => `${Math.round(v)}`);
-    this.addSlider(panel, 'Gag Frequency', 0.05, 1.0, 0.05, () => this.step4.cameraGagChance, (v) => {
-      this.step4.cameraGagChance = v;
-    }, (v) => `${Math.round(v * 100)}%`);
-    this.addSlider(panel, 'Gag Duration', 750, 1600, 50, () => this.step4.cameraGagDurationMs, (v) => {
-      this.step4.cameraGagDurationMs = v;
-    }, (v) => `${Math.round(v)}ms`);
-    this.addSlider(panel, 'Global Cooldown', 1500, 15000, 500, () => this.step4.cameraGagCooldownMs, (v) => {
-      this.step4.cameraGagCooldownMs = v;
-    }, (v) => `${(v / 1000).toFixed(1)}s`);
-    this.addSlider(panel, 'Splat Volume', 0, 1.4, 0.1, () => this.step4.cameraGagSplatVolume, (v) => {
-      this.step4.cameraGagSplatVolume = v;
-    }, (v) => `${Math.round(v * 100)}%`);
-    this.addSlider(panel, 'Squeak Volume', 0, 1.4, 0.1, () => this.step4.cameraGagSqueakVolume, (v) => {
-      this.step4.cameraGagSqueakVolume = v;
-    }, (v) => `${Math.round(v * 100)}%`);
 
-    // ===== STEP 3 MAYHEM & STEP 2 COMBAT =====
-    this.addSectionTitle(panel, 'MAYHEM & COMBAT (STEP 2-3)');
-    this.addSlider(panel, 'Throw Force', 280, 900, 20, () => this.mayhem.objectThrowForce, (v) => {
-      this.mayhem.objectThrowForce = v;
-    }, (v) => `${Math.round(v)}`);
-    this.addSlider(panel, 'Chain Transfer', 0.3, 1.3, 0.05, () => this.mayhem.knockbackTransferCoeff, (v) => {
-      this.mayhem.knockbackTransferCoeff = v;
-    }, (v) => `${v.toFixed(2)}`);
-    this.addSlider(panel, 'Slip Probability', 0, 1.0, 0.05, () => this.mayhem.slipProbability, (v) => {
-      this.mayhem.slipProbability = v;
-    }, (v) => `${Math.round(v * 100)}%`);
-    this.addSlider(panel, 'Player Damage', 0.4, 3.0, 0.1, () => this.tuning.playerDamageMultiplier, (v) => {
-      this.tuning.playerDamageMultiplier = v;
-    }, (v) => `${v.toFixed(1)}x`);
-    this.addSlider(panel, 'Hit-Stop Scale', 0, 2.5, 0.1, () => this.tuning.hitStopScale, (v) => {
-      this.tuning.hitStopScale = v;
-    }, (v) => `${v.toFixed(1)}x`);
-    this.addSlider(panel, 'Screen Shake', 0, 2.5, 0.1, () => this.tuning.screenShakeIntensity, (v) => {
-      this.tuning.screenShakeIntensity = v;
-    }, (v) => `${v.toFixed(1)}x`);
+    // ===== STEP 2-3 TUNING & AUDIO =====
+    this.addSectionTitle(panel, 'COMBAT, MAYHEM & AUDIO');
     this.addSlider(panel, 'Combat SFX Vol', 0, 1.0, 0.05, () => this.tuning.audioVolume, (v) => {
       this.tuning.audioVolume = v;
     }, (v) => `${Math.round(v * 100)}%`);
     this.addSlider(panel, 'Env SFX Volume', 0, 1.0, 0.05, () => this.mayhem.envSfxVolume, (v) => {
       this.mayhem.envSfxVolume = v;
     }, (v) => `${Math.round(v * 100)}%`);
+    this.addSlider(panel, 'Screen Shake', 0, 2.5, 0.1, () => this.tuning.screenShakeIntensity, (v) => {
+      this.tuning.screenShakeIntensity = v;
+    }, (v) => `${v.toFixed(1)}x`);
+    this.addSlider(panel, 'Hit-Stop Scale', 0, 2.5, 0.1, () => this.tuning.hitStopScale, (v) => {
+      this.tuning.hitStopScale = v;
+    }, (v) => `${v.toFixed(1)}x`);
 
-    // ===== OVERLAYS & ROOM TOOLS =====
-    this.addSectionTitle(panel, 'DEBUG OVERLAYS & ROOM');
-    const togglesWrap = document.createElement('div');
-    togglesWrap.style.cssText = 'display:flex;flex-direction:column;gap:4px;margin-bottom:8px;';
-    this.addCheckbox(togglesWrap, 'Show AI State & Fear', () => this.step4.showAiDebug, (v) => {
-      this.step4.showAiDebug = v;
-    });
-    this.addCheckbox(togglesWrap, 'Enable Screen Shake', () => this.tuning.screenShakeEnabled, (v) => {
-      this.tuning.screenShakeEnabled = v;
-    });
-    this.addCheckbox(togglesWrap, 'Show Attack Hitboxes', () => this.tuning.showHitboxes, (v) => {
+    this.addCheckbox(panel, 'Show Attack Hitboxes', () => this.tuning.showHitboxes, (v) => {
       this.tuning.showHitboxes = v;
     });
-    this.addCheckbox(togglesWrap, 'Show Object Collisions', () => this.mayhem.showObjectShapes, (v) => {
+    this.addCheckbox(panel, 'Show Object & Actor Shapes', () => this.mayhem.showObjectShapes, (v) => {
       this.mayhem.showObjectShapes = v;
-    });
-    this.addCheckbox(togglesWrap, 'Show Actor Collisions', () => this.mayhem.showActorShapes, (v) => {
       this.mayhem.showActorShapes = v;
-      this.tuning.showGroundPositions = v;
     });
-    this.addCheckbox(togglesWrap, 'Show Velocity Vectors', () => this.mayhem.showVelocityVectors, (v) => {
-      this.mayhem.showVelocityVectors = v;
-    });
-    panel.appendChild(togglesWrap);
 
+    // ===== ROOM TOOLS =====
+    this.addSectionTitle(panel, 'ARENA SPAWN & RESET');
     const btnRow = document.createElement('div');
     btnRow.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;gap:5px;';
+    btnRow.appendChild(this.makeButton('+ Table', '#92400e', () => this.actions.onSpawnObject('table')));
     btnRow.appendChild(this.makeButton('+ Water Barrel', '#0284c7', () => this.actions.onSpawnObject('barrel_water')));
-    btnRow.appendChild(this.makeButton('+ Ceramic Jar', '#c2410c', () => this.actions.onSpawnObject('ceramic_jar')));
-    btnRow.appendChild(this.makeButton('+ Puddle', '#0369a1', () => this.actions.onSpawnPuddle()));
     btnRow.appendChild(this.makeButton('+ Group (5)', '#4338ca', () => this.actions.onSpawnBanditGroup()));
     btnRow.appendChild(this.makeButton('Clear Enemies', '#991b1b', () => this.actions.onClearEnemies()));
     btnRow.appendChild(this.makeButton('Reset Env', '#b45309', () => this.actions.onResetEnvironment()));
-    const resetBtn = this.makeButton('Reset Test Room (R)', '#d97706', () => this.actions.onResetRoom());
-    resetBtn.style.gridColumn = 'span 2';
-    btnRow.appendChild(resetBtn);
+    btnRow.appendChild(this.makeButton('Reset Room (R)', '#d97706', () => this.actions.onResetRoom()));
     panel.appendChild(btnRow);
 
     document.body.appendChild(panel);
@@ -264,7 +249,7 @@ export class CombatDebugPanel implements IGameSystem {
     const el = document.createElement('div');
     el.textContent = text;
     el.style.cssText =
-      'margin:8px 0 5px;padding-top:6px;border-top:1px solid rgba(148,163,184,0.22);color:#c084fc;font-weight:bold;font-size:10px;letter-spacing:0.06em;';
+      'margin:8px 0 5px;padding-top:6px;border-top:1px solid rgba(148,163,184,0.22);color:#38bdf8;font-weight:bold;font-size:10px;letter-spacing:0.06em;';
     parent.appendChild(el);
   }
 
@@ -297,7 +282,7 @@ export class CombatDebugPanel implements IGameSystem {
     input.max = String(max);
     input.step = String(step);
     input.value = String(getter());
-    input.style.cssText = 'width:100%;accent-color:#c084fc;cursor:pointer;';
+    input.style.cssText = 'width:100%;accent-color:#38bdf8;cursor:pointer;';
     input.oninput = () => {
       const num = parseFloat(input.value);
       setter(num);
@@ -321,11 +306,11 @@ export class CombatDebugPanel implements IGameSystem {
     setter: (val: boolean) => void,
   ): void {
     const wrap = document.createElement('label');
-    wrap.style.cssText = 'display:flex;align-items:center;gap:6px;cursor:pointer;';
+    wrap.style.cssText = 'display:flex;align-items:center;gap:6px;cursor:pointer;margin-bottom:3px;';
     const box = document.createElement('input');
     box.type = 'checkbox';
     box.checked = getter();
-    box.style.accentColor = '#c084fc';
+    box.style.accentColor = '#38bdf8';
     box.onchange = () => {
       setter(box.checked);
       this.actions.onTuningChanged();

@@ -18,6 +18,8 @@ export interface MoveInputState {
   specialPressed: boolean;
   /** True on the frame Switch Hero (TAB) was pressed */
   switchHeroPressed: boolean;
+  /** True on the frame Party Setup (P) was pressed */
+  partySetupPressed: boolean;
   /** True on the frame the Combat Debug Panel toggle key (F2) was pressed */
   toggleCombatPanelPressed: boolean;
   /** True on the frame the HUD Debug overlay toggle key (F3) was pressed */
@@ -28,7 +30,7 @@ export interface MoveInputState {
 
 /**
  * Handles smooth 8-direction movement (WASD + Arrows) and responsive combat/mayhem/special inputs
- * (Z, X, V, SPACE, TAB, F2, F3, R).
+ * (Z, X, V, SPACE, TAB, P, F2, F3, R).
  */
 export class InputSystem implements IGameSystem {
   public readonly id = 'input';
@@ -47,6 +49,7 @@ export class InputSystem implements IGameSystem {
     v: Phaser.Input.Keyboard.Key;
     space: Phaser.Input.Keyboard.Key;
     tab: Phaser.Input.Keyboard.Key;
+    p: Phaser.Input.Keyboard.Key;
     r: Phaser.Input.Keyboard.Key;
     f2: Phaser.Input.Keyboard.Key;
     f3: Phaser.Input.Keyboard.Key;
@@ -73,6 +76,7 @@ export class InputSystem implements IGameSystem {
       v: kb.addKey(Phaser.Input.Keyboard.KeyCodes.V),
       space: kb.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE),
       tab: kb.addKey(Phaser.Input.Keyboard.KeyCodes.TAB),
+      p: kb.addKey(Phaser.Input.Keyboard.KeyCodes.P),
       r: kb.addKey(Phaser.Input.Keyboard.KeyCodes.R),
       f2: kb.addKey(Phaser.Input.Keyboard.KeyCodes.F2),
       f3: kb.addKey(Phaser.Input.Keyboard.KeyCodes.F3),
@@ -90,6 +94,7 @@ export class InputSystem implements IGameSystem {
         interactPressed: false,
         specialPressed: false,
         switchHeroPressed: false,
+        partySetupPressed: false,
         toggleCombatPanelPressed: false,
         toggleDebugPressed: false,
         restartPressed: false,
@@ -117,6 +122,7 @@ export class InputSystem implements IGameSystem {
       interactPressed: Phaser.Input.Keyboard.JustDown(this.keys.space),
       specialPressed: Phaser.Input.Keyboard.JustDown(this.keys.v),
       switchHeroPressed: Phaser.Input.Keyboard.JustDown(this.keys.tab),
+      partySetupPressed: Phaser.Input.Keyboard.JustDown(this.keys.p),
       toggleCombatPanelPressed: Phaser.Input.Keyboard.JustDown(this.keys.f2),
       toggleDebugPressed: Phaser.Input.Keyboard.JustDown(this.keys.f3),
       restartPressed: Phaser.Input.Keyboard.JustDown(this.keys.r),

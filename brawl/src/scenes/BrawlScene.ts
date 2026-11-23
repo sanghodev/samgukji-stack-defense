@@ -5,9 +5,15 @@ import {
   GAME_HEIGHT,
   GAME_WIDTH,
   PERSPECTIVE_CONFIG,
-  PLAYER_CONFIG,
 } from '../config/arenaConfig';
 import { CombatTuning, createDefaultCombatTuning } from '../config/combatConfig';
+import {
+  createDefaultStep5Tuning,
+  getPartyBalanceProfile,
+  HERO_DATA,
+  HeroId,
+  Step5Tuning,
+} from '../config/heroConfig';
 import {
   createDefaultMayhemTuning,
   EnvObjectKind,
@@ -22,6 +28,7 @@ import {
 import { check25DMeleeHit } from '../core/CombatMath';
 import { EventBus } from '../core/EventBus';
 import { sweptCircleHit25D } from '../core/MayhemPhysics';
+import { PartyManager } from '../core/PartyManager';
 import {
   clampToArena,
   getDepthOrder,
@@ -30,8 +37,10 @@ import {
 } from '../core/Perspective';
 import { Bandit } from '../entities/Bandit';
 import { EnvironmentalObject } from '../entities/EnvironmentalObject';
+import { Projectile } from '../entities/Projectile';
 import { SurfaceHazard } from '../entities/SurfaceHazard';
-import { Warrior } from '../entities/Warrior';
+import { ArrowFireRequest, Warrior } from '../entities/Warrior';
+import { AIHeroController } from '../systems/AIHeroController';
 import { CameraGagController } from '../systems/CameraGagController';
 import { CollisionChainManager } from '../systems/CollisionChainManager';
 import { CombatAudioManager } from '../systems/CombatAudioManager';
@@ -44,21 +53,37 @@ import { HitStopSystem } from '../systems/HitStopSystem';
 import { ImpactVfxSystem } from '../systems/ImpactVfxSystem';
 import { InputSystem } from '../systems/InputSystem';
 import { SystemRegistry } from '../systems/ModuleRegistry';
+import { HeroActionInput, MultiInputManager } from '../systems/MultiInputManager';
+import { PartySetupOverlay } from '../systems/PartySetupOverlay';
 import { ScreenShakeSystem } from '../systems/ScreenShakeSystem';
 import { MarketplaceArena } from '../world/MarketplaceArena';
 
+const HERO_SPAWN_OFFSETS: ReadonlyArray<{ x: number; y: number }> = [
+  { x: 580, y: 515 },
+  { x: 700, y: 515 },
+  { x: 520, y: 565 },
+  { x: 760, y: 565 },
+];
+
 /**
  * Main fixed-camera 2.5D arena scene for Three Kingdoms Mayhem (삼국지 난장판).
- * Step 4: Zhang Fei Bulldozer Charge (맹장돌진), 6 reactive comedic bandit personalities,
- * fear/panic/fleeing/tripping/hiding/peeking/surrendering, and rare screen-glass camera gags.
+ * Step 5: Four differentiated heroes (Zhao Yun, Guan Yu, Zhang Fei, Huang Zhong),
+ * flexible 1-4 hero party setup (Solo to 4P), role-based AI cooperation,
+ * 2.5D arrow projectiles, and local multiplayer with join-in-progress.
  */
 export class BrawlScene extends Phaser.Scene {
   private eventsBus!: EventBus;
   private tuning!: CombatTuning;
   private mayhemTuning!: MayhemTuning;
   private step4Tuning!: Step4Tuning;
+  private step5Tuning!: Step5Tuning;
+  private party!: PartyManager;
+
   private systems!: SystemRegistry;
   private inputSystem!: InputSystem;
+  private multiInput!: MultiInputManager;
+  private aiHeroCtrl!: AIHeroController;
+  private partyOverlay!: PartySetupOverlay;
   private debugOverlay!: DebugOverlay;
   private combatDebugPanel!: CombatDebugPanel;
   private combatHud!: CombatHud;
@@ -71,14 +96,17 @@ export class BrawlScene extends Phaser.Scene {
   private chainManager!: CollisionChainManager;
   private cameraGag!: CameraGagController;
   private arena!: MarketplaceArena;
-  private player!: Warrior;
 
+  private readonly heroes: Warrior[] = [];
+  private readonly projectiles: Projectile[] = [];
   private readonly bandits: Bandit[] = [];
   private readonly envObjects: EnvironmentalObject[] = [];
   private readonly hazards: SurfaceHazard[] = [];
+
   private nextBanditSeq = 1;
   private nextObjectSeq = 1;
   private nextHazardSeq = 1;
+  private nextProjectileSeq = 1;
 
   private enemiesDefeated = 0;
   private comboHits = 0;
@@ -90,7 +118,7 @@ export class BrawlScene extends Phaser.Scene {
   }
 
   public create(): void {
-    // Strictly stationary fixed camera (not a scrolling game)
+    // Strictly stationary fixed camera
     this.cameras.main.setViewport(0, 0, GAME_WIDTH, GAME_HEIGHT);
     this.cameras.main.setScroll(0, 0);
     this.cameras.main.setZoom(1);
@@ -99,10 +127,19 @@ export class BrawlScene extends Phaser.Scene {
     this.tuning = createDefaultCombatTuning();
     this.mayhemTuning = createDefaultMayhemTuning();
     this.step4Tuning = createDefaultStep4Tuning();
+    this.step5Tuning = createDefaultStep5Tuning();
+    this.party = new PartyManager();
     this.systems = new SystemRegistry({ scene: this, events: this.eventsBus });
 
     // Register modular subsystems
     this.inputSystem = this.systems.register(new InputSystem());
+    this.multiInput = this.systems.register(
+      new MultiInputManager({
+        onGamepadJoinRequested: (deviceId) => this.handleJoinInProgress(deviceId),
+        onGamepadDisconnected: (deviceId) => this.handleDeviceDisconnected(deviceId),
+      }),
+    );
+    this.aiHeroCtrl = new AIHeroController(this.step5Tuning);
     this.hitStop = this.systems.register(new HitStopSystem(this.tuning));
     this.screenShake = this.systems.register(new ScreenShakeSystem(this.tuning));
     this.audio = this.systems.register(new CombatAudioManager(this.tuning, this.mayhemTuning));
@@ -112,43 +149,91 @@ export class BrawlScene extends Phaser.Scene {
     this.cameraGag = this.systems.register(
       new CameraGagController(this.step4Tuning, this.audio, this.screenShake),
     );
-    this.combatHud = this.systems.register(new CombatHud(() => this.resetTestRoom()));
+    this.partyOverlay = this.systems.register(
+      new PartySetupOverlay(this.party, {
+        onApplyParty: () => this.rebuildPartyAndEncounter(),
+      }),
+    );
+    this.combatHud = this.systems.register(
+      new CombatHud(
+        () => this.resetTestRoom(),
+        () => this.partyOverlay.toggle(),
+      ),
+    );
     this.debugOverlay = this.systems.register(new DebugOverlay());
     this.combatDebugPanel = this.systems.register(
-      new CombatDebugPanel(this.tuning, this.mayhemTuning, this.step4Tuning, {
-        onSpawnBandit: (arch) => this.spawnSingleBandit(arch),
-        onSpawnBanditGroup: () => {
-          const pool: BanditArchetype[] = ['coward', 'clumsy', 'overconfident', 'sneaky', 'stubborn'];
-          for (let i = 0; i < 5; i++) this.spawnSingleBandit(pool[i % pool.length]);
+      new CombatDebugPanel(
+        this.tuning,
+        this.mayhemTuning,
+        this.step4Tuning,
+        this.step5Tuning,
+        {
+          onSpawnBandit: (arch) => this.spawnSingleBandit(arch),
+          onSpawnBanditGroup: () => {
+            const pool: BanditArchetype[] = ['coward', 'clumsy', 'overconfident', 'sneaky', 'stubborn'];
+            for (let i = 0; i < 5; i++) this.spawnSingleBandit(pool[i % pool.length]);
+          },
+          onClearEnemies: () => this.clearAllBandits(),
+          onSpawnObject: (kind) => this.spawnObjectNearPrimaryHero(kind),
+          onSpawnPuddle: () => {
+            const p = this.getPrimaryHumanHero();
+            if (p) {
+              this.spawnHazard(
+                'water_puddle',
+                p.x + Math.cos(p.facingAngle) * 70,
+                p.y + Math.sin(p.facingAngle) * 48,
+              );
+            }
+          },
+          onResetEnvironment: () => this.resetEnvironmentObjects(),
+          onClearDebris: () => {
+            this.debris.clearAll();
+            this.clearAllHazards();
+          },
+          onTriggerSpecial: (heroId) => this.debugTriggerHeroSpecial(heroId),
+          onForceEnemyPanic: () => {
+            for (const b of this.bandits) b.forcePanic(this.coordinator);
+          },
+          onPreviewCameraGag: () => this.cameraGag.forcePreview(),
+          onResetAiStates: () => {
+            for (const b of this.bandits) b.resetAiState(this.coordinator);
+          },
+          onSwitchHero: () => this.handleTabCycleHero(),
+          onOpenPartySetup: () => this.partyOverlay.toggle(),
+          onForceAiToHuman: () => {
+            const simDev = `gamepad:${this.party.humanPlayerCount}`;
+            this.handleJoinInProgress(simDev);
+          },
+          onForceHumanToAi: () => {
+            const extraHuman = this.party.humanSlots.find((s) => s.deviceId !== 'keyboard');
+            if (extraHuman?.deviceId) {
+              this.handleDeviceDisconnected(extraHuman.deviceId);
+            } else {
+              this.partyOverlay.showToast('P1 키보드는 유지됩니다 (추가 플레이어 없음)');
+            }
+          },
+          onSimulateGamepadDisconnect: () => {
+            const padSlot = this.party.humanSlots.find((s) => s.deviceId?.startsWith('gamepad:'));
+            if (padSlot?.deviceId) {
+              this.handleDeviceDisconnected(padSlot.deviceId);
+            } else {
+              this.partyOverlay.showToast('연결된 게임패드 슬롯이 없습니다');
+            }
+          },
+          onTestFourPlayerInputs: () => this.debugSimulateFourPlayerBurst(),
+          onResetHeroPositions: () => {
+            this.heroes.forEach((h, idx) => {
+              const spot = HERO_SPAWN_OFFSETS[idx % HERO_SPAWN_OFFSETS.length];
+              h.reset(spot.x, spot.y);
+            });
+          },
+          onResetSpecialCooldowns: () => {
+            for (const h of this.heroes) h.specialCooldownMs = 0;
+          },
+          onResetRoom: () => this.resetTestRoom(),
+          onTuningChanged: () => this.applyLiveTuning(),
         },
-        onClearEnemies: () => this.clearAllBandits(),
-        onSpawnObject: (kind) => this.spawnObjectNearPlayer(kind),
-        onSpawnPuddle: () =>
-          this.spawnHazard(
-            'water_puddle',
-            this.player.x + Math.cos(this.player.facingAngle) * 70,
-            this.player.y + Math.sin(this.player.facingAngle) * 48,
-          ),
-        onResetEnvironment: () => this.resetEnvironmentObjects(),
-        onClearDebris: () => {
-          this.debris.clearAll();
-          this.clearAllHazards();
-        },
-        onTriggerChargeTest: () => {
-          this.player.switchHero('zhangfei');
-          this.player.triggerSpecial(this.inputSystem.sample(), true);
-        },
-        onForceEnemyPanic: () => {
-          for (const b of this.bandits) b.forcePanic(this.coordinator);
-        },
-        onPreviewCameraGag: () => this.cameraGag.forcePreview(),
-        onResetAiStates: () => {
-          for (const b of this.bandits) b.resetAiState(this.coordinator);
-        },
-        onSwitchHero: () => this.player.switchHero(),
-        onResetRoom: () => this.resetTestRoom(),
-        onTuningChanged: () => this.applyLiveTuning(),
-      }),
+      ),
     );
 
     this.chainManager = new CollisionChainManager({
@@ -162,121 +247,71 @@ export class BrawlScene extends Phaser.Scene {
     });
 
     this.arena = new MarketplaceArena(this);
-
-    // Step 4 starts with Zhang Fei (장비) selected; press TAB anytime to switch to Zhao Yun!
-    this.player = new Warrior(
-      this,
-      PLAYER_CONFIG.spawnX,
-      PLAYER_CONFIG.spawnY,
-      'zhangfei',
-      this.tuning,
-      this.step4Tuning,
-      {
-        onFootstep: (heavy) =>
-          heavy ? this.audio.playHeavyFootstep() : this.audio.playFootstep(),
-        onAttackActiveStart: (attackType, x, y, dirX, dirY, range) => {
-          if (attackType === 'HEAVY' || attackType === 'LIGHT_3') {
-            this.audio.playStrongWhoosh();
-          } else {
-            this.audio.playLightWhoosh();
-          }
-          this.vfx.spawnSpearTrail(x, y, dirX, dirY, attackType, range);
-          this.eventsBus.emit('combat:player_attack_start', {
-            attackType,
-            x,
-            y,
-            dirX,
-            dirY,
-          });
-        },
-        onZhangFeiRoar: (x, y) => {
-          this.audio.playZhangFeiRoar();
-          this.debris.spawn('DUST_CLOUD', x, y);
-          this.spawnRoarShockwave(x, y);
-          this.screenShake.trigger(4.5, 140);
-          // Nearby cowardly/nervous bandits witness Zhang Fei's terrifying roar!
-          this.broadcastFearWave(x, y, 360, 34);
-        },
-        onZhangFeiChargeRush: (x, y, dirX, dirY) => {
-          this.audio.playChargeRush();
-          this.debris.spawn('DUST_CLOUD', x, y, -dirX, -dirY);
-          this.broadcastFearWave(x, y, 320, 26);
-        },
-        onZhangFeiChargeSkid: (x, y) => {
-          this.audio.playChargeSkid();
-          this.debris.spawn('LANDING_DUST', x, y);
-        },
-        onZhaoYunWhirlwind: (x, y) => {
-          this.audio.playStrongWhoosh();
-          this.executeZhaoYunWhirlwind(x, y);
-        },
-        onSpecialCooldownRejected: () => {
-          this.combatHud.flashSpecialRejected();
-        },
-        onPlayerHurt: (damage, hp, maxHp) => {
-          this.audio.playPlayerHurt();
-          this.vfx.spawnPlayerHitFlash(this.player.x, this.player.y);
-          this.screenShake.trigger(5.5, 115);
-          this.comboHits = 0;
-          this.eventsBus.emit('combat:player_hurt', {
-            damage,
-            hp,
-            maxHp,
-            x: this.player.x,
-            y: this.player.y,
-          });
-        },
-        onPlayerDefeated: () => {
-          this.screenShake.trigger(8, 220);
-          this.eventsBus.emit('combat:player_defeated', {
-            x: this.player.x,
-            y: this.player.y,
-          });
-        },
-      },
-    );
-
     this.debugVisGfx = this.add.graphics().setDepth(DEPTH_LAYERS.HUD - 10);
 
-    this.spawnInitialEnvironment();
-    this.spawnStep4BanditSquad();
+    // Spawn active party heroes (1-4), environment, and balanced bandit squad
+    this.rebuildPartyAndEncounter();
 
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, this.handleShutdown, this);
   }
 
   public update(time: number, delta: number): void {
-    const input = this.inputSystem.sample();
+    const kbInput = this.inputSystem.sample();
 
-    if (input.toggleDebugPressed) {
+    if (kbInput.toggleDebugPressed) {
       const visible = this.debugOverlay.toggle();
       this.eventsBus.emit('debug:toggled', { visible });
     }
 
-    if (input.toggleCombatPanelPressed) {
+    if (kbInput.toggleCombatPanelPressed) {
       const visible = this.combatDebugPanel.toggle();
       this.eventsBus.emit('combat:panel_toggled', { visible });
     }
 
-    if (input.restartPressed) {
+    if (kbInput.partySetupPressed) {
+      this.partyOverlay.toggle();
+      return;
+    }
+
+    // Pause combat simulation cleanly while Party Setup modal is open
+    if (this.partyOverlay.isOpen) return;
+
+    if (kbInput.restartPressed) {
       this.resetTestRoom();
       return;
     }
 
-    if (input.switchHeroPressed && !this.player.isDefeated) {
-      this.player.switchHero();
+    if (kbInput.switchHeroPressed) {
+      this.handleTabCycleHero();
     }
 
-    if (input.specialPressed && !this.player.isDefeated) {
-      this.player.triggerSpecial(input);
+    // Poll Gamepad Start buttons for Join-in-Progress!
+    const assignedDevices = new Set(
+      this.party.humanSlots.map((s) => s.deviceId).filter((d): d is string => Boolean(d)),
+    );
+    this.multiInput.pollJoinRequests(assignedDevices);
+
+    // Gather unified inputs (Human Keyboard/Gamepad OR AIHeroController) for each active hero
+    const heroInputs = new Map<HeroId, HeroActionInput>();
+    for (const hero of this.heroes) {
+      const slot = this.party.getSlotByHero(hero.heroId);
+      let actionInput: HeroActionInput;
+      if (slot && slot.control === 'HUMAN' && slot.deviceId) {
+        actionInput = this.multiInput.sampleDevice(slot.deviceId, kbInput);
+      } else {
+        actionInput = this.aiHeroCtrl.computeInput(
+          hero,
+          delta,
+          this.heroes,
+          this.bandits,
+          this.envObjects,
+        );
+      }
+      heroInputs.set(hero.heroId, actionInput);
+      hero.bufferInput(actionInput);
     }
 
-    if (input.interactPressed && !this.player.isDefeated) {
-      this.handlePlayerInteract();
-    }
-
-    this.player.bufferInput(input);
-
-    // Always update screen shake, camera gag overlay, VFX, debris, and arena ambience
+    // Always update screen shake, camera gag, VFX, debris, and arena ambience
     this.screenShake.update(time, delta);
     this.cameraGag.update(time, delta);
     this.vfx.update(time, delta);
@@ -293,14 +328,32 @@ export class BrawlScene extends Phaser.Scene {
     if (!frozenByHitStop) {
       this.coordinator.update(time, delta);
 
-      this.player.update(delta, input, (x, y, r) =>
-        this.arena.resolvePropCollisions(x, y, r),
-      );
+      // Update all active heroes (1..4)
+      for (const hero of this.heroes) {
+        const inp = heroInputs.get(hero.heroId);
+        if (!inp) continue;
 
-      this.updatePickupPrompt();
-      this.resolvePlayerMeleeHits();
-      this.resolveZhangFeiChargeCollisions();
+        if (inp.specialPressed && !hero.isDefeated) {
+          hero.triggerSpecial(inp);
+        }
+        if (inp.interactPressed && !hero.isDefeated) {
+          this.handleHeroInteract(hero);
+        }
 
+        hero.update(delta, inp, this.heroes, (x, y, r) =>
+          this.arena.resolvePropCollisions(x, y, r),
+        );
+
+        this.resolveHeroMeleeHits(hero);
+        if (hero.isChargeActive) {
+          this.resolveZhangFeiChargeCollisions(hero);
+        }
+      }
+
+      this.updatePickupPrompts();
+      this.updateProjectiles(delta);
+
+      // Update environmental objects
       for (let i = this.envObjects.length - 1; i >= 0; i--) {
         const obj = this.envObjects[i];
         obj.update(delta, (x, y, r) => this.arena.resolvePropCollisions(x, y, r));
@@ -310,13 +363,15 @@ export class BrawlScene extends Phaser.Scene {
         }
       }
 
+      // Update bandits (each targets nearest alive hero!)
       for (let i = this.bandits.length - 1; i >= 0; i--) {
         const bandit = this.bandits[i];
+        const targetHero = this.findNearestAliveHero(bandit.x, bandit.y);
         bandit.update(
           delta,
-          this.player.x,
-          this.player.y,
-          !this.player.isDefeated,
+          targetHero ? targetHero.x : 640,
+          targetHero ? targetHero.y : 515,
+          targetHero !== null,
           this.coordinator,
           this.bandits,
           this.envObjects,
@@ -329,6 +384,7 @@ export class BrawlScene extends Phaser.Scene {
         }
       }
 
+      // Update surface hazards
       for (let i = this.hazards.length - 1; i >= 0; i--) {
         const hz = this.hazards[i];
         hz.update(delta);
@@ -343,16 +399,24 @@ export class BrawlScene extends Phaser.Scene {
 
     this.renderDebugVisuals();
 
+    // Update dynamic 1-to-4 Hero HUD
     const activeEnemies = this.bandits.filter((b) => !b.isNeutralized).length;
     const surrenderedCount = this.bandits.filter((b) => b.state === 'SURRENDERED').length;
+    const allHumansDefeated =
+      this.heroes.filter((h) => h.isHumanControlled).every((h) => h.isDefeated);
 
     this.combatHud.render(
       {
-        heroId: this.player.heroId,
-        playerHp: this.player.hp,
-        playerMaxHp: this.player.maxHp,
-        playerDefeated: this.player.isDefeated,
-        specialReadyRatio: this.player.specialReadyRatio,
+        heroes: this.heroes.map((h) => ({
+          slotIndex: h.slotIndex,
+          heroId: h.heroId,
+          control: h.controlType,
+          hp: h.hp,
+          maxHp: h.maxHp,
+          specialReadyRatio: h.specialReadyRatio,
+          isDefeated: h.isDefeated,
+        })),
+        allHumansDefeated,
         enemiesActive: activeEnemies,
         enemiesNeutralized: this.enemiesDefeated + surrenderedCount,
         enemiesSurrendered: surrenderedCount,
@@ -362,37 +426,483 @@ export class BrawlScene extends Phaser.Scene {
       delta,
     );
 
-    this.debugOverlay.render({
-      fps: this.game.loop.actualFps,
-      x: this.player.x,
-      y: this.player.y,
-      depthRatio: this.player.depthRatio,
-      scale: this.player.currentScale,
-      facing: this.player.facingLabel,
-      speed: this.player.speed,
-    });
+    const primary = this.getPrimaryHumanHero() ?? this.heroes[0];
+    if (primary) {
+      this.debugOverlay.render({
+        fps: this.game.loop.actualFps,
+        x: primary.x,
+        y: primary.y,
+        depthRatio: primary.depthRatio,
+        scale: primary.currentScale,
+        facing: primary.facingLabel,
+        speed: primary.speed,
+      });
+    }
   }
 
-  /**
-   * Swept 2.5D Bulldozer Charge collisions for Zhang Fei's 맹장돌진!
-   * Bowls through multiple bandits (connecting into STEP 3 domino chains) and smashes props.
-   */
-  private resolveZhangFeiChargeCollisions(): void {
-    if (!this.player.isChargeActive) return;
+  // ==================== PARTY & MULTIPLAYER LIFECYCLE ====================
 
+  private rebuildPartyAndEncounter(): void {
+    this.clearAllHeroes();
+    this.clearAllProjectiles();
+    this.clearAllBandits();
+    this.resetEnvironmentObjects();
+    this.cameraGag.reset();
+    this.hitStop.reset();
+    this.screenShake.reset();
+    this.coordinator.reset();
+    this.aiHeroCtrl.clear();
+
+    this.enemiesDefeated = 0;
+    this.comboHits = 0;
+    this.comboDecayMs = 0;
+
+    // Spawn ONLY configured active slots (EMPTY slots remain strictly empty!)
+    for (const slot of this.party.activeSlots) {
+      if (!slot.heroId) continue;
+      const pos = HERO_SPAWN_OFFSETS[slot.slotIndex % HERO_SPAWN_OFFSETS.length];
+      this.spawnHero(slot.heroId, slot.slotIndex, slot.control, pos.x, pos.y);
+    }
+
+    // Balance bandit count & HP to active party size (1..4)
+    const balance = getPartyBalanceProfile(this.heroes.length);
+    this.tuning.enemyCount = balance.enemyCount;
+    this.spawnBalancedBanditSquad(balance.enemyCount, balance.enemyHpMultiplier);
+  }
+
+  private spawnHero(
+    heroId: HeroId,
+    slotIndex: number,
+    control: 'HUMAN' | 'AI' | 'EMPTY',
+    x: number,
+    y: number,
+  ): Warrior {
+    const hero = new Warrior(
+      this,
+      heroId,
+      slotIndex,
+      control,
+      x,
+      y,
+      this.tuning,
+      this.step4Tuning,
+      this.step5Tuning,
+      {
+        onFootstep: (_h, heavy) =>
+          heavy ? this.audio.playHeavyFootstep() : this.audio.playFootstep(),
+        onAttackActiveStart: (h, attackType, ax, ay, dirX, dirY, range) => {
+          if (h.heroId === 'guanyu') {
+            this.audio.playGuandaoSweep();
+          } else if (attackType === 'HEAVY' || attackType === 'LIGHT_3') {
+            this.audio.playStrongWhoosh();
+          } else {
+            this.audio.playLightWhoosh();
+          }
+          this.vfx.spawnSpearTrail(ax, ay, dirX, dirY, attackType, range);
+        },
+        onFireArrow: (req) => this.spawnArrowProjectile(req),
+        onZhangFeiRoar: (h) => {
+          this.audio.playZhangFeiRoar();
+          this.debris.spawn('DUST_CLOUD', h.x, h.y);
+          this.spawnShockwave(h.x, h.y, 0xc084fc, 110);
+          this.screenShake.trigger(4.5, 140);
+          this.broadcastFearWave(h.x, h.y, 360, 34);
+        },
+        onZhangFeiChargeRush: (h) => {
+          this.audio.playChargeRush();
+          this.debris.spawn('DUST_CLOUD', h.x, h.y, -h.chargeDirX, -h.chargeDirY);
+          this.broadcastFearWave(h.x, h.y, 320, 26);
+        },
+        onZhangFeiChargeSkid: (h) => {
+          this.audio.playChargeSkid();
+          this.debris.spawn('LANDING_DUST', h.x, h.y);
+        },
+        onWhiteDragonStrike: (h, idx, isFinal) =>
+          this.executeZhaoYunWhiteDragonStrike(h, idx, isFinal),
+        onGuanYuCyclonePulse: (h, isFinal) =>
+          this.executeGuanYuCyclonePulse(h, isFinal),
+        onHuangZhongBurst: (h) => this.executeHuangZhongArrowBurst(h),
+        onSpecialCooldownRejected: (h) => {
+          if (h.isHumanControlled) this.combatHud.flashSpecialRejected();
+        },
+        onHeroHurt: (h) => {
+          this.audio.playPlayerHurt();
+          this.vfx.spawnPlayerHitFlash(h.x, h.y);
+          if (h.isHumanControlled) {
+            this.screenShake.trigger(5.0, 110);
+            this.comboHits = 0;
+          }
+        },
+        onHeroDefeated: () => {
+          this.screenShake.trigger(7.5, 200);
+        },
+      },
+    );
+    this.heroes.push(hero);
+    return hero;
+  }
+
+  private handleJoinInProgress(deviceId: string): void {
+    const res = this.party.joinHuman(deviceId);
+    if (!res.success || !res.heroId || res.slotIndex === undefined) {
+      this.partyOverlay.showToast(res.reason ?? '파티가 가득 찼습니다 (최대 4인)');
+      return;
+    }
+
+    const heroName = HERO_DATA[res.heroId].displayName;
+    if (res.mode === 'TOOK_OVER_AI') {
+      const existing = this.heroes.find((h) => h.heroId === res.heroId);
+      existing?.setOwnership(res.slotIndex, 'HUMAN');
+      this.partyOverlay.showToast(`🎮 P${res.slotIndex + 1} 난입! (${heroName} AI → 플레이어 전환)`);
+    } else if (res.mode === 'SPAWNED_NEW') {
+      const pos = HERO_SPAWN_OFFSETS[res.slotIndex % HERO_SPAWN_OFFSETS.length];
+      this.spawnHero(res.heroId, res.slotIndex, 'HUMAN', pos.x, pos.y);
+      this.partyOverlay.showToast(`🎮 P${res.slotIndex + 1} 신규 합류! (${heroName} 참전)`);
+    }
+  }
+
+  private handleDeviceDisconnected(deviceId: string): void {
+    const res = this.party.releaseHumanDevice(deviceId);
+    if (!res.success || !res.heroId || res.slotIndex === undefined) return;
+    const existing = this.heroes.find((h) => h.heroId === res.heroId);
+    existing?.setOwnership(res.slotIndex, 'AI');
+    const heroName = HERO_DATA[res.heroId].displayName;
+    this.partyOverlay.showToast(`🔌 ${deviceId} 연결 해제 → ${heroName} AI 동료로 안전 전환`);
+  }
+
+  private handleTabCycleHero(): void {
+    const res = this.party.cycleHumanHero('keyboard');
+    if (!res.success || !res.heroId) return;
+    // Sync all hero badges
+    for (const h of this.heroes) {
+      const slot = this.party.getSlotByHero(h.heroId);
+      if (slot) h.setOwnership(slot.slotIndex, slot.control);
+    }
+    this.partyOverlay.showToast(`⚔ P1 영웅 교대 → ${HERO_DATA[res.heroId].displayName}`);
+  }
+
+  // ==================== 4 HERO SPECIAL ABILITIES & PROJECTILES ====================
+
+  private executeZhaoYunWhiteDragonStrike(
+    hero: Warrior,
+    _idx: number,
+    isFinal: boolean,
+  ): void {
+    const dirX = Math.cos(hero.facingAngle);
+    const dirY = Math.sin(hero.facingAngle);
+    this.audio.playWhiteDragonStrike();
+    this.vfx.spawnSpearTrail(
+      hero.x,
+      hero.y,
+      dirX,
+      dirY,
+      isFinal ? 'LIGHT_3' : 'LIGHT_1',
+      115,
+    );
+
+    const query = {
+      originX: hero.x,
+      originY: hero.y,
+      dirX,
+      dirY,
+      range: 115 + this.step5Tuning.treasureMods.extraReach,
+      halfWidth: 44,
+      verticalRatio: PERSPECTIVE_CONFIG.verticalMoveRatio,
+      backGrace: 18,
+    };
+
+    let hits = 0;
+    for (const bandit of this.bandits) {
+      if (!bandit.isVulnerable) continue;
+      if (!check25DMeleeHit(query, bandit.getHurtbox()).hit) continue;
+
+      const dmg = Math.round(
+        (isFinal ? 26 : 14) *
+          this.tuning.playerDamageMultiplier *
+          this.step5Tuning.heroDamageMultiplier,
+      );
+      if (
+        bandit.takeHit(
+          {
+            damage: dmg,
+            dirX,
+            dirY,
+            knockbackForce: isFinal ? 420 : 120,
+            launchVz: isFinal ? 250 : 0,
+            isHeavy: isFinal,
+          },
+          this.coordinator,
+        )
+      ) {
+        hits += 1;
+        this.comboHits += 1;
+        this.comboDecayMs = 2200;
+        this.vfx.spawnHitImpact(
+          bandit.x,
+          bandit.y,
+          bandit.elevationZ,
+          dirX,
+          dirY,
+          isFinal ? 'LIGHT_3' : 'LIGHT_1',
+          dmg,
+        );
+      }
+    }
+
+    if (hits > 0 && isFinal) {
+      this.audio.playComboFinisherImpact();
+      this.hitStop.trigger(45);
+      this.screenShake.trigger(5.5, 110, dirX, dirY);
+      this.broadcastFearWave(hero.x, hero.y, 260, 20);
+    }
+  }
+
+  private executeGuanYuCyclonePulse(hero: Warrior, isFinal: boolean): void {
+    const radius = 148 * this.step5Tuning.treasureMods.cycloneRadiusMul;
+    this.audio.playCycloneSpin();
+    this.spawnShockwave(hero.x, hero.y, 0x22c55e, radius * 1.45);
+    this.debris.spawn('DUST_CLOUD', hero.x, hero.y);
+
+    let hits = 0;
+    for (const bandit of this.bandits) {
+      if (!bandit.isVulnerable) continue;
+      const dx = bandit.x - hero.x;
+      const dy = (bandit.y - hero.y) / PERSPECTIVE_CONFIG.verticalMoveRatio;
+      const dist = Math.hypot(dx, dy);
+      if (dist > radius + bandit.collisionRadius) continue;
+
+      const nx = dist > 0.1 ? dx / dist : 1;
+      const ny = dist > 0.1 ? dy / dist : 0;
+      const dmg = Math.round(
+        (isFinal ? 28 : 16) *
+          this.tuning.playerDamageMultiplier *
+          this.step5Tuning.heroDamageMultiplier,
+      );
+
+      if (
+        bandit.takeHit(
+          {
+            damage: dmg,
+            dirX: nx,
+            dirY: ny,
+            knockbackForce: isFinal ? 460 : 185,
+            launchVz: isFinal ? 275 : 0,
+            isHeavy: isFinal,
+          },
+          this.coordinator,
+        )
+      ) {
+        hits += 1;
+        this.comboHits += 1;
+        this.comboDecayMs = 2200;
+        this.vfx.spawnHitImpact(
+          bandit.x,
+          bandit.y,
+          bandit.elevationZ,
+          nx,
+          ny,
+          isFinal ? 'HEAVY' : 'LIGHT_2',
+          dmg,
+        );
+      }
+    }
+
+    if (hits > 0 && isFinal) {
+      this.audio.playHeavyImpact();
+      this.hitStop.trigger(52);
+      this.screenShake.trigger(6.5, 130);
+      this.broadcastFearWave(hero.x, hero.y, 290, 24);
+    }
+  }
+
+  private executeHuangZhongArrowBurst(hero: Warrior): void {
+    this.audio.playArrowBurst();
+    const baseAngle = hero.facingAngle;
+    const count = 5 + Math.max(0, this.step5Tuning.treasureMods.extraSpreadArrows);
+    const totalSpread = 0.72;
+
+    for (let i = 0; i < count; i++) {
+      const t = count > 1 ? i / (count - 1) - 0.5 : 0;
+      const ang = baseAngle + t * totalSpread;
+      this.spawnArrowProjectile({
+        hero,
+        x: hero.x + Math.cos(ang) * 24,
+        y: hero.y + Math.sin(ang) * 16,
+        dirX: Math.cos(ang),
+        dirY: Math.sin(ang),
+        penetrating: true,
+        isBurst: true,
+      });
+    }
+  }
+
+  private spawnArrowProjectile(req: ArrowFireRequest): void {
+    if (!req.isBurst) {
+      this.audio.playBowRelease();
+    }
+    const baseDmg = req.penetrating ? 30 : 18;
+    const dmg = Math.round(
+      baseDmg *
+        this.tuning.playerDamageMultiplier *
+        this.step5Tuning.heroDamageMultiplier,
+    );
+    const proj = new Projectile(this, {
+      id: `arrow_${this.nextProjectileSeq++}`,
+      ownerHeroId: req.hero.id,
+      x: req.x,
+      y: req.y,
+      dirX: req.dirX,
+      dirY: req.dirY,
+      speed: req.penetrating ? 760 : 660,
+      damage: dmg,
+      knockbackForce: req.penetrating ? 330 : 155,
+      launchVz: req.penetrating ? 175 : 0,
+      penetrating: req.penetrating,
+      maxRange: 560,
+      radius: req.penetrating ? 14 : 11,
+      tint: req.penetrating ? 0xfde047 : undefined,
+    });
+    this.projectiles.push(proj);
+  }
+
+  private updateProjectiles(deltaMs: number): void {
+    for (let i = this.projectiles.length - 1; i >= 0; i--) {
+      const proj = this.projectiles[i];
+      proj.update(deltaMs);
+      if (proj.readyForRemoval) {
+        proj.destroy();
+        this.projectiles.splice(i, 1);
+        continue;
+      }
+
+      // Swept 2.5D collision vs Bandits
+      for (const bandit of this.bandits) {
+        if (!bandit.isVulnerable) continue;
+        if (!proj.hitTracker.canHit(bandit.id)) continue;
+
+        const hit = sweptCircleHit25D(
+          proj.prevX,
+          proj.prevY,
+          proj.x,
+          proj.y,
+          proj.radius,
+          bandit.x,
+          bandit.y,
+          bandit.collisionRadius,
+          PERSPECTIVE_CONFIG.verticalMoveRatio,
+        );
+        if (!hit.hit) continue;
+
+        proj.hitTracker.recordHit(bandit.id);
+        const applied = bandit.takeHit(
+          {
+            damage: proj.damage,
+            dirX: proj.dirX,
+            dirY: proj.dirY,
+            knockbackForce: proj.knockbackForce,
+            launchVz: proj.launchVz,
+            isHeavy: proj.penetrating,
+          },
+          this.coordinator,
+        );
+        if (!applied) continue;
+
+        this.comboHits += 1;
+        this.comboDecayMs = 2200;
+        this.audio.playArrowHit();
+        this.audio.playEnemyHurt(proj.penetrating);
+        this.vfx.spawnHitImpact(
+          bandit.x,
+          bandit.y,
+          bandit.elevationZ,
+          proj.dirX,
+          proj.dirY,
+          proj.penetrating ? 'LIGHT_3' : 'LIGHT_1',
+          proj.damage,
+        );
+
+        if (!proj.penetrating) {
+          proj.readyForRemoval = true;
+          break;
+        }
+      }
+
+      // Swept 2.5D collision vs Environmental Objects (arrows shatter jars & knock barrels!)
+      if (!proj.readyForRemoval) {
+        for (const obj of this.envObjects) {
+          if (obj.isBroken || obj.state === 'CARRIED') continue;
+          if (!proj.hitTracker.canHit(obj.id)) continue;
+
+          const hit = sweptCircleHit25D(
+            proj.prevX,
+            proj.prevY,
+            proj.x,
+            proj.y,
+            proj.radius,
+            obj.x,
+            obj.y,
+            obj.radius,
+            PERSPECTIVE_CONFIG.verticalMoveRatio,
+          );
+          if (!hit.hit) continue;
+
+          proj.hitTracker.recordHit(obj.id);
+          obj.applyStrike(proj.dirX, proj.dirY, proj.knockbackForce, 1, proj.penetrating);
+          this.audio.playArrowHit();
+          if (!proj.penetrating) {
+            proj.readyForRemoval = true;
+            break;
+          }
+        }
+      }
+
+      // Optional Friendly Fire (default OFF so Huang Zhong never hits allies!)
+      if (!proj.readyForRemoval && this.step5Tuning.friendlyFire) {
+        for (const ally of this.heroes) {
+          if (ally.id === proj.ownerHeroId || ally.isDefeated) continue;
+          if (!proj.hitTracker.canHit(ally.id)) continue;
+          const hit = sweptCircleHit25D(
+            proj.prevX,
+            proj.prevY,
+            proj.x,
+            proj.y,
+            proj.radius,
+            ally.x,
+            ally.y,
+            ally.collisionRadius,
+            PERSPECTIVE_CONFIG.verticalMoveRatio,
+          );
+          if (hit.hit) {
+            proj.hitTracker.recordHit(ally.id);
+            ally.takeDamage(Math.round(proj.damage * 0.4), proj.dirX, proj.dirY);
+            if (!proj.penetrating) {
+              proj.readyForRemoval = true;
+              break;
+            }
+          }
+        }
+      }
+
+      if (proj.readyForRemoval) {
+        proj.destroy();
+        this.projectiles.splice(i, 1);
+      }
+    }
+  }
+
+  private resolveZhangFeiChargeCollisions(hero: Warrior): void {
     const chargeRadius = 32;
     let hitEnemy = false;
 
-    // 1. Charge vs Bandits
     for (const bandit of this.bandits) {
       if (!bandit.isVulnerable) continue;
-      if (!this.player.chargeHitTracker.canHit(bandit.id)) continue;
+      if (!hero.chargeHitTracker.canHit(bandit.id)) continue;
 
       const hit = sweptCircleHit25D(
-        this.player.prevX,
-        this.player.prevY,
-        this.player.x,
-        this.player.y,
+        hero.prevX,
+        hero.prevY,
+        hero.x,
+        hero.y,
         chargeRadius,
         bandit.x,
         bandit.y,
@@ -401,12 +911,14 @@ export class BrawlScene extends Phaser.Scene {
       );
       if (!hit.hit) continue;
 
-      this.player.chargeHitTracker.recordHit(bandit.id);
-
-      // Blend charge direction + slight lateral bowling deflection
-      const dirX = this.player.chargeDirX * 0.72 + hit.nx * 0.28;
-      const dirY = this.player.chargeDirY * 0.72 + hit.ny * 0.28;
-      const dmg = Math.round(this.step4Tuning.chargeDamage * this.tuning.playerDamageMultiplier);
+      hero.chargeHitTracker.recordHit(bandit.id);
+      const dirX = hero.chargeDirX * 0.72 + hit.nx * 0.28;
+      const dirY = hero.chargeDirY * 0.72 + hit.ny * 0.28;
+      const dmg = Math.round(
+        this.step4Tuning.chargeDamage *
+          this.tuning.playerDamageMultiplier *
+          this.step5Tuning.heroDamageMultiplier,
+      );
 
       const applied = bandit.takeHit(
         {
@@ -424,41 +936,35 @@ export class BrawlScene extends Phaser.Scene {
       hitEnemy = true;
       this.comboHits += 1;
       this.comboDecayMs = 2400;
-
       this.vfx.spawnHitImpact(bandit.x, bandit.y, bandit.elevationZ, dirX, dirY, 'HEAVY', dmg);
       this.debris.spawn('HEAVY_IMPACT_SPARK', bandit.x, bandit.y, dirX, dirY);
       this.debris.spawn('DUST_CLOUD', bandit.x, bandit.y, dirX, dirY);
 
-      // Drain charge energy per bandit plowed through (Elites drain more!)
       const loss =
         this.step4Tuning.chargeEnergyLossPerHit * (bandit.archetype === 'elite' ? 2.0 : 1.0);
-      this.player.consumeChargeEnergy(loss);
-
-      // Witnesses panic when seeing friends launched flying!
+      hero.consumeChargeEnergy(loss);
       this.broadcastFearWave(bandit.x, bandit.y, 260, 22);
-
-      if (!this.player.isChargeActive) break;
+      if (!hero.isChargeActive) break;
     }
 
     if (hitEnemy) {
       this.audio.playShoulderCollision();
       this.audio.playEnemyHurt(true);
-      this.hitStop.trigger(48);
-      this.screenShake.trigger(7.0, 130, this.player.chargeDirX, this.player.chargeDirY);
+      this.hitStop.trigger(44);
+      this.screenShake.trigger(6.5, 125, hero.chargeDirX, hero.chargeDirY);
     }
 
-    // 2. Charge vs Environmental Objects (smashes jars, barrels, lightweight tables!)
-    if (!this.player.isChargeActive) return;
+    if (!hero.isChargeActive) return;
 
     for (const obj of this.envObjects) {
       if (obj.isBroken || obj.state === 'CARRIED') continue;
-      if (!this.player.chargeHitTracker.canHit(obj.id)) continue;
+      if (!hero.chargeHitTracker.canHit(obj.id)) continue;
 
       const hit = sweptCircleHit25D(
-        this.player.prevX,
-        this.player.prevY,
-        this.player.x,
-        this.player.y,
+        hero.prevX,
+        hero.prevY,
+        hero.x,
+        hero.y,
         chargeRadius,
         obj.x,
         obj.y,
@@ -467,89 +973,193 @@ export class BrawlScene extends Phaser.Scene {
       );
       if (!hit.hit) continue;
 
-      this.player.chargeHitTracker.recordHit(obj.id);
+      hero.chargeHitTracker.recordHit(obj.id);
       obj.applyStrike(
-        this.player.chargeDirX,
-        this.player.chargeDirY,
+        hero.chargeDirX,
+        hero.chargeDirY,
         this.step4Tuning.chargeKnockback * 1.15,
         2,
         true,
       );
-
       this.audio.playHeavyEnvImpact();
       this.debris.spawn('DUST_CLOUD', obj.x, obj.y, hit.nx, hit.ny);
-      this.screenShake.trigger(5.2, 100, this.player.chargeDirX, this.player.chargeDirY);
-
-      // Heavy tables drain more charge energy
-      const energyCost = obj.spec.kind === 'table' ? 38 : 16;
-      this.player.consumeChargeEnergy(energyCost);
-      if (!this.player.isChargeActive) break;
+      this.screenShake.trigger(5.0, 95, hero.chargeDirX, hero.chargeDirY);
+      hero.consumeChargeEnergy(obj.spec.kind === 'table' ? 38 : 16);
+      if (!hero.isChargeActive) break;
     }
   }
 
-  private executeZhaoYunWhirlwind(x: number, y: number): void {
-    const scale = getPerspectiveScale(y);
-    const ring = this.add.graphics().setPosition(x, y - 20 * scale).setDepth(getDepthOrder(y) + 30);
-    ring.lineStyle(10 * scale, 0x38bdf8, 0.85);
-    ring.strokeEllipse(0, 0, 210 * scale, 140 * scale);
-    this.tweens.add({
-      targets: ring,
-      alpha: 0,
-      scale: 1.25,
-      duration: 240,
-      onComplete: () => ring.destroy(),
-    });
+  private resolveHeroMeleeHits(hero: Warrior): void {
+    const query = hero.getActiveHitbox();
+    const spec = hero.currentAttack;
+    if (!query || !spec) return;
 
-    let hits = 0;
+    const prof = hero.profile;
+    let hitEnemyCount = 0;
+
     for (const bandit of this.bandits) {
       if (!bandit.isVulnerable) continue;
-      const dx = bandit.x - x;
-      const dy = (bandit.y - y) / PERSPECTIVE_CONFIG.verticalMoveRatio;
-      const dist = Math.hypot(dx, dy);
-      if (dist > 135) continue;
+      if (!hero.hitTracker.canHit(bandit.id)) continue;
 
-      const nx = dist > 0.1 ? dx / dist : 1;
-      const ny = dist > 0.1 ? dy / dist : 0;
-      const dmg = Math.round(36 * this.tuning.playerDamageMultiplier);
-      if (
-        bandit.takeHit(
-          {
-            damage: dmg,
-            dirX: nx,
-            dirY: ny,
-            knockbackForce: 430,
-            launchVz: 260,
-            isHeavy: true,
-          },
-          this.coordinator,
-        )
-      ) {
-        hits += 1;
-        this.comboHits += 1;
-        this.comboDecayMs = 2200;
-        this.vfx.spawnHitImpact(bandit.x, bandit.y, bandit.elevationZ, nx, ny, 'LIGHT_3', dmg);
+      const result = check25DMeleeHit(query, bandit.getHurtbox());
+      if (!result.hit) continue;
+
+      hero.hitTracker.recordHit(bandit.id);
+      const damage = Math.max(
+        1,
+        Math.round(
+          spec.baseDamage *
+            this.tuning.playerDamageMultiplier *
+            prof.damageMultiplier *
+            this.step5Tuning.heroDamageMultiplier,
+        ),
+      );
+
+      const applied = bandit.takeHit(
+        {
+          damage,
+          dirX: query.dirX,
+          dirY: query.dirY,
+          knockbackForce: spec.knockbackForce * prof.knockbackMultiplier,
+          launchVz: spec.launchVz,
+          isHeavy: spec.isHeavy,
+        },
+        this.coordinator,
+      );
+      if (!applied) continue;
+
+      hitEnemyCount += 1;
+      this.comboHits += 1;
+      this.comboDecayMs = 2200;
+
+      this.vfx.spawnHitImpact(
+        bandit.x,
+        bandit.y,
+        bandit.elevationZ,
+        query.dirX,
+        query.dirY,
+        spec.type,
+        damage,
+      );
+
+      if (spec.isHeavy || spec.isFinisher) {
+        this.broadcastFearWave(bandit.x, bandit.y, 240, 18);
       }
     }
 
-    if (hits > 0) {
-      this.audio.playComboFinisherImpact();
-      this.hitStop.trigger(50);
-      this.screenShake.trigger(6.0, 120);
-      this.broadcastFearWave(x, y, 280, 24);
+    for (const obj of this.envObjects) {
+      if (obj.isBroken || obj.state === 'CARRIED') continue;
+      if (!hero.hitTracker.canHit(obj.id)) continue;
+
+      const res = check25DMeleeHit(query, {
+        id: obj.id,
+        x: obj.x,
+        y: obj.y,
+        radius: obj.radius,
+        elevationZ: obj.elevationZ,
+        vulnerable: true,
+      });
+      if (!res.hit) continue;
+
+      hero.hitTracker.recordHit(obj.id);
+      obj.applyStrike(
+        query.dirX,
+        query.dirY,
+        spec.knockbackForce * 1.1,
+        spec.isHeavy || spec.isFinisher ? 2 : 1,
+        spec.isHeavy || spec.isFinisher,
+      );
+      if (!obj.isBroken) {
+        if (obj.spec.rollable) this.audio.playBarrelCollision();
+        else this.audio.playTableImpact();
+        this.debris.spawn('DUST_CLOUD', obj.x, obj.y, query.dirX, query.dirY);
+      }
+    }
+
+    if (hitEnemyCount > 0) {
+      if (spec.isHeavy) {
+        this.audio.playHeavyImpact();
+        this.audio.playEnemyHurt(true);
+      } else if (spec.isFinisher) {
+        this.audio.playComboFinisherImpact();
+        this.audio.playEnemyHurt(true);
+      } else {
+        this.audio.playLightImpact();
+        this.audio.playEnemyHurt(false);
+      }
+
+      if (hero.isHumanControlled) {
+        this.hitStop.trigger(spec.hitStopMs);
+        if (spec.shakeIntensity > 0) {
+          this.screenShake.trigger(
+            spec.shakeIntensity,
+            spec.shakeDurationMs,
+            query.dirX,
+            query.dirY,
+          );
+        }
+      }
     }
   }
 
-  private spawnRoarShockwave(x: number, y: number): void {
-    const scale = getPerspectiveScale(y);
-    const g = this.add.graphics().setPosition(x, y - 22 * scale).setDepth(getDepthOrder(y) + 30);
-    g.lineStyle(5 * scale, 0xc084fc, 0.9);
-    g.strokeEllipse(0, 0, 110 * scale, 70 * scale);
-    g.lineStyle(3 * scale, 0xfde047, 0.95);
-    g.strokeEllipse(0, 0, 74 * scale, 48 * scale);
+  // ==================== INTERACTION, ENVIRONMENT & BANDITS ====================
 
+  private handleHeroInteract(hero: Warrior): void {
+    if (hero.isCarrying) {
+      const thrown = hero.throwCarriedObject(this.mayhemTuning.objectThrowForce);
+      if (thrown) {
+        if (thrown.spec.kind === 'table') this.audio.playHeavyTableThrow();
+        else this.audio.playStrongWhoosh();
+      }
+      return;
+    }
+
+    const nearest = this.findNearestPickupableFor(hero);
+    if (nearest && hero.pickUpObject(nearest)) {
+      this.audio.playWoodPickup();
+      if (nearest.spec.kind === 'table') this.audio.playWoodCreak();
+    }
+  }
+
+  private findNearestPickupableFor(hero: Warrior): EnvironmentalObject | null {
+    let best: EnvironmentalObject | null = null;
+    let bestDistSq = Infinity;
+    const grabReach = 68;
+
+    for (const obj of this.envObjects) {
+      if (!obj.canBePickedUp) continue;
+      const dx = obj.x - hero.x;
+      const dy = (obj.y - hero.y) / PERSPECTIVE_CONFIG.verticalMoveRatio;
+      const distSq = dx * dx + dy * dy;
+      const maxReach = grabReach + obj.radius;
+      if (distSq <= maxReach * maxReach && distSq < bestDistSq) {
+        bestDistSq = distSq;
+        best = obj;
+      }
+    }
+    return best;
+  }
+
+  private updatePickupPrompts(): void {
+    const highlighted = new Set<EnvironmentalObject>();
+    for (const h of this.heroes) {
+      if (!h.isHumanControlled || h.isCarrying || h.isDefeated) continue;
+      const near = this.findNearestPickupableFor(h);
+      if (near) highlighted.add(near);
+    }
+    for (const obj of this.envObjects) {
+      obj.setPickupPromptVisible(highlighted.has(obj));
+    }
+  }
+
+  private spawnShockwave(x: number, y: number, colorHex: number, width: number): void {
+    const scale = getPerspectiveScale(y);
+    const g = this.add.graphics().setPosition(x, y - 20 * scale).setDepth(getDepthOrder(y) + 30);
+    g.lineStyle(5 * scale, colorHex, 0.9);
+    g.strokeEllipse(0, 0, width * scale, width * 0.65 * scale);
     this.tweens.add({
       targets: g,
-      scale: 2.3,
+      scale: 1.55,
       alpha: 0,
       duration: 240,
       ease: 'Cubic.easeOut',
@@ -576,259 +1186,64 @@ export class BrawlScene extends Phaser.Scene {
     }
   }
 
-  private handlePlayerInteract(): void {
-    if (this.player.isCarrying) {
-      const thrown = this.player.throwCarriedObject(this.mayhemTuning.objectThrowForce);
-      if (thrown) {
-        if (thrown.spec.kind === 'table') {
-          this.audio.playHeavyTableThrow();
-        } else {
-          this.audio.playStrongWhoosh();
-        }
-      }
-      return;
-    }
-
-    const nearest = this.findNearestPickupable();
-    if (nearest && this.player.pickUpObject(nearest)) {
-      this.audio.playWoodPickup();
-      if (nearest.spec.kind === 'table') {
-        this.audio.playWoodCreak();
-      }
-    }
-  }
-
-  private findNearestPickupable(): EnvironmentalObject | null {
-    let best: EnvironmentalObject | null = null;
-    let bestDistSq = Infinity;
-    const grabReach = 68;
-
-    for (const obj of this.envObjects) {
-      if (!obj.canBePickedUp) continue;
-      const dx = obj.x - this.player.x;
-      const dy = (obj.y - this.player.y) / PERSPECTIVE_CONFIG.verticalMoveRatio;
-      const distSq = dx * dx + dy * dy;
-      const maxReach = grabReach + obj.radius;
-      if (distSq <= maxReach * maxReach && distSq < bestDistSq) {
-        bestDistSq = distSq;
-        best = obj;
-      }
-    }
-    return best;
-  }
-
-  private updatePickupPrompt(): void {
-    const nearest = this.player.isCarrying ? null : this.findNearestPickupable();
-    for (const obj of this.envObjects) {
-      obj.setPickupPromptVisible(obj === nearest);
-    }
-  }
-
-  private resolvePlayerMeleeHits(): void {
-    const query = this.player.getActiveHitbox();
-    const spec = this.player.currentAttack;
-    if (!query || !spec) return;
-
-    const heroMul = this.player.profile;
-    let hitEnemyCount = 0;
-
-    for (const bandit of this.bandits) {
-      if (!bandit.isVulnerable) continue;
-      if (!this.player.hitTracker.canHit(bandit.id)) continue;
-
-      const result = check25DMeleeHit(query, bandit.getHurtbox());
-      if (!result.hit) continue;
-
-      this.player.hitTracker.recordHit(bandit.id);
-      const damage = Math.max(
-        1,
-        Math.round(
-          spec.baseDamage *
-            this.tuning.playerDamageMultiplier *
-            heroMul.damageMultiplier,
-        ),
-      );
-
-      const applied = bandit.takeHit(
-        {
-          damage,
-          dirX: query.dirX,
-          dirY: query.dirY,
-          knockbackForce: spec.knockbackForce * heroMul.knockbackMultiplier,
-          launchVz: spec.launchVz,
-          isHeavy: spec.isHeavy,
-        },
-        this.coordinator,
-      );
-      if (!applied) continue;
-
-      hitEnemyCount += 1;
-      this.comboHits += 1;
-      this.comboDecayMs = 2200;
-
-      this.vfx.spawnHitImpact(
-        bandit.x,
-        bandit.y,
-        bandit.elevationZ,
-        query.dirX,
-        query.dirY,
-        spec.type,
-        damage,
-      );
-
-      if (spec.isHeavy || spec.isFinisher) {
-        this.broadcastFearWave(bandit.x, bandit.y, 240, 18);
-      }
-
-      this.eventsBus.emit('combat:hit', {
-        attackerId: this.player.id,
-        targetId: bandit.id,
-        attackType: spec.type,
-        damage,
-        x: bandit.x,
-        y: bandit.y,
-        dirX: query.dirX,
-        dirY: query.dirY,
-      });
-    }
-
-    for (const obj of this.envObjects) {
-      if (obj.isBroken || obj.state === 'CARRIED') continue;
-      if (!this.player.hitTracker.canHit(obj.id)) continue;
-
-      const res = check25DMeleeHit(query, {
-        id: obj.id,
-        x: obj.x,
-        y: obj.y,
-        radius: obj.radius,
-        elevationZ: obj.elevationZ,
-        vulnerable: true,
-      });
-      if (!res.hit) continue;
-
-      this.player.hitTracker.recordHit(obj.id);
-      const durLoss = spec.isHeavy || spec.isFinisher ? 2 : 1;
-      obj.applyStrike(
-        query.dirX,
-        query.dirY,
-        spec.knockbackForce * 1.1,
-        durLoss,
-        spec.isHeavy || spec.isFinisher,
-      );
-
-      if (!obj.isBroken) {
-        if (obj.spec.rollable) this.audio.playBarrelCollision();
-        else this.audio.playTableImpact();
-        this.debris.spawn('DUST_CLOUD', obj.x, obj.y, query.dirX, query.dirY);
-      }
-      this.hitStop.trigger(spec.isHeavy ? 42 : 20);
-      this.screenShake.trigger(spec.isHeavy ? 5 : 2.2, 80, query.dirX, query.dirY);
-    }
-
-    if (hitEnemyCount > 0) {
-      if (spec.isHeavy) {
-        this.audio.playHeavyImpact();
-        this.audio.playEnemyHurt(true);
-      } else if (spec.isFinisher) {
-        this.audio.playComboFinisherImpact();
-        this.audio.playEnemyHurt(true);
-      } else {
-        this.audio.playLightImpact();
-        this.audio.playEnemyHurt(false);
-      }
-
-      this.hitStop.trigger(spec.hitStopMs);
-      if (spec.shakeIntensity > 0) {
-        this.screenShake.trigger(
-          spec.shakeIntensity,
-          spec.shakeDurationMs,
-          query.dirX,
-          query.dirY,
-        );
-      }
-    }
-  }
-
   private spawnInitialEnvironment(): void {
-    // 3 Wooden Tables (also serve as valid cover spots!)
-    this.spawnObject('table', 515, 488);
-    this.spawnObject('table', 775, 494);
+    this.spawnObject('table', 490, 488);
+    this.spawnObject('table', 790, 494);
     this.spawnObject('table', 640, 344);
-
-    // 3 Barrels (2 water-filled, 1 empty — also valid cover!)
-    this.spawnObject('barrel_water', 442, 378);
-    this.spawnObject('barrel_water', 845, 384);
+    this.spawnObject('barrel_water', 436, 378);
+    this.spawnObject('barrel_water', 848, 384);
     this.spawnObject('barrel_empty', 340, 566);
-
-    // 4 Ceramic Jars
     this.spawnObject('ceramic_jar', 575, 294);
     this.spawnObject('ceramic_jar', 705, 294);
     this.spawnObject('ceramic_jar', 288, 456);
     this.spawnObject('ceramic_jar', 988, 462);
-
-    // 2 Fruit Baskets
     this.spawnObject('fruit_basket', 385, 616);
     this.spawnObject('fruit_basket', 918, 608);
-
-    // 1 Starter Water Puddle
     this.spawnHazard('water_puddle', 640, 412);
   }
 
   private spawnObject(kind: EnvObjectKind, x: number, y: number): EnvironmentalObject {
     const id = `env_${kind}_${this.nextObjectSeq++}`;
-    const obj = new EnvironmentalObject(
-      this,
-      id,
-      kind,
-      x,
-      y,
-      this.mayhemTuning,
-      {
-        onWallHit: (o) => {
-          this.audio.playHeavyEnvImpact();
-          this.debris.spawn('DUST_CLOUD', o.x, o.y);
-          this.screenShake.trigger(3.8, 80);
-        },
-        onLanded: (o, impactSpeed) => {
-          if (impactSpeed > 110) {
-            this.audio.playFallThud();
-            this.debris.spawn('LANDING_DUST', o.x, o.y);
-          }
-        },
-        onRollTick: () => this.audio.playBarrelRoll(),
-        onBroken: (o, dirX, dirY) => this.handleObjectBroken(o, dirX, dirY),
+    const obj = new EnvironmentalObject(this, id, kind, x, y, this.mayhemTuning, {
+      onWallHit: (o) => {
+        this.audio.playHeavyEnvImpact();
+        this.debris.spawn('DUST_CLOUD', o.x, o.y);
+        this.screenShake.trigger(3.8, 80);
       },
-    );
+      onLanded: (o, impactSpeed) => {
+        if (impactSpeed > 110) {
+          this.audio.playFallThud();
+          this.debris.spawn('LANDING_DUST', o.x, o.y);
+        }
+      },
+      onRollTick: () => this.audio.playBarrelRoll(),
+      onBroken: (o, dirX, dirY) => this.handleObjectBroken(o, dirX, dirY),
+    });
     this.envObjects.push(obj);
     return obj;
   }
 
-  private spawnObjectNearPlayer(kind: EnvObjectKind): void {
-    const x = this.player.x + Math.cos(this.player.facingAngle) * 72;
-    const y = this.player.y + Math.sin(this.player.facingAngle) * 52;
-    this.spawnObject(kind, x, y);
+  private spawnObjectNearPrimaryHero(kind: EnvObjectKind): void {
+    const h = this.getPrimaryHumanHero() ?? this.heroes[0];
+    if (!h) return;
+    this.spawnObject(
+      kind,
+      h.x + Math.cos(h.facingAngle) * 72,
+      h.y + Math.sin(h.facingAngle) * 52,
+    );
   }
 
-  private handleObjectBroken(
-    obj: EnvironmentalObject,
-    dirX: number,
-    dirY: number,
-  ): void {
-    // Notify any bandit hiding behind this destroyed cover!
+  private handleObjectBroken(obj: EnvironmentalObject, dirX: number, dirY: number): void {
     for (const bandit of this.bandits) {
-      if (bandit.coverObject === obj) {
-        bandit.onCoverDestroyed(this.coordinator);
-      }
+      if (bandit.coverObject === obj) bandit.onCoverDestroyed(this.coordinator);
     }
-
-    // Loud destruction spooks nearby cowards!
     this.broadcastFearWave(obj.x, obj.y, 220, 16);
 
     if (obj.spec.kind === 'table') {
       this.audio.playTableShatter();
       this.debris.spawn('WOOD_SPLINTERS', obj.x, obj.y, dirX, dirY);
       this.debris.spawn('DUST_CLOUD', obj.x, obj.y, dirX, dirY);
-      this.screenShake.trigger(6.5, 130, dirX, dirY);
+      this.screenShake.trigger(6.0, 120, dirX, dirY);
     } else if (obj.spec.rollable) {
       this.audio.playBarrelBreak(obj.spec.containsWater);
       this.debris.spawn('WOOD_SPLINTERS', obj.x, obj.y, dirX, dirY);
@@ -838,32 +1253,27 @@ export class BrawlScene extends Phaser.Scene {
       } else {
         this.debris.spawn('DUST_CLOUD', obj.x, obj.y);
       }
-      this.screenShake.trigger(5.0, 105, dirX, dirY);
+      this.screenShake.trigger(4.8, 100, dirX, dirY);
     } else if (obj.spec.material === 'ceramic') {
       this.audio.playCeramicBreak();
       this.debris.spawn('CERAMIC_SHARDS', obj.x, obj.y, dirX, dirY);
       this.debris.spawn('DUST_CLOUD', obj.x, obj.y);
-      this.screenShake.trigger(3.0, 75, dirX, dirY);
+      this.screenShake.trigger(2.8, 70, dirX, dirY);
     } else if (obj.spec.spillsFood) {
       this.audio.playTableImpact();
       this.debris.spawn('FRUIT_SCATTER', obj.x, obj.y, dirX, dirY);
       this.debris.spawn('WOOD_SPLINTERS', obj.x, obj.y, dirX, dirY);
       this.spawnHazard('spilled_food', obj.x, obj.y);
-      this.spawnHazard(
-        'banana_peel',
-        obj.x + (dirX || 1) * 34,
-        obj.y + (dirY || 0.2) * 20,
-      );
-      this.screenShake.trigger(3.2, 80, dirX, dirY);
+      this.spawnHazard('banana_peel', obj.x + (dirX || 1) * 34, obj.y + (dirY || 0.2) * 20);
+      this.screenShake.trigger(3.0, 75, dirX, dirY);
     }
   }
 
   private spawnHazard(kind: HazardKind, rawX: number, rawY: number): SurfaceHazard {
     const clamped = clampToArena(rawX, rawY, 32);
-    const id = `hazard_${kind}_${this.nextHazardSeq++}`;
     const hz = new SurfaceHazard(
       this,
-      id,
+      `hazard_${kind}_${this.nextHazardSeq++}`,
       kind,
       clamped.x,
       clamped.y,
@@ -873,29 +1283,35 @@ export class BrawlScene extends Phaser.Scene {
     return hz;
   }
 
-  /**
-   * Step 4 Test Scenario Squad (12 bandits across all 6 personalities):
-   * - 2 Cowards, 2 Clumsy, 2 Overconfident, 2 Sneaky, 3 Stubborn, 1 Elite!
-   */
-  private spawnStep4BanditSquad(): void {
-    const squad: Array<{ arch: BanditArchetype; x: number; y: number }> = [
+  private spawnBalancedBanditSquad(count: number, hpMul: number): void {
+    const roster: Array<{ arch: BanditArchetype; x: number; y: number }> = [
       { arch: 'coward', x: 470, y: 312 },
-      { arch: 'coward', x: 810, y: 318 },
       { arch: 'clumsy', x: 560, y: 396 },
-      { arch: 'clumsy', x: 724, y: 404 },
       { arch: 'overconfident', x: 390, y: 468 },
-      { arch: 'overconfident', x: 892, y: 476 },
+      { arch: 'stubborn', x: 892, y: 476 },
+      { arch: 'coward', x: 810, y: 318 },
       { arch: 'sneaky', x: 486, y: 548 },
+      { arch: 'elite', x: 720, y: 334 },
+      { arch: 'clumsy', x: 724, y: 404 },
+      { arch: 'overconfident', x: 355, y: 598 },
       { arch: 'sneaky', x: 792, y: 554 },
-      { arch: 'stubborn', x: 355, y: 598 },
       { arch: 'stubborn', x: 930, y: 596 },
       { arch: 'stubborn', x: 565, y: 626 },
-      { arch: 'elite', x: 720, y: 334 },
+      { arch: 'coward', x: 410, y: 330 },
+      { arch: 'clumsy', x: 860, y: 345 },
+      { arch: 'elite', x: 640, y: 295 },
     ];
 
-    squad.forEach((entry, idx) => {
-      this.spawnBanditAt(entry.x, entry.y, idx, entry.arch);
-    });
+    const prevEnemyHp = this.tuning.enemyMaxHp;
+    this.tuning.enemyMaxHp = Math.round(100 * hpMul);
+    for (let i = 0; i < count; i++) {
+      if (i < roster.length) {
+        this.spawnBanditAt(roster[i].x, roster[i].y, i, roster[i].arch);
+      } else {
+        this.spawnSingleBandit();
+      }
+    }
+    this.tuning.enemyMaxHp = prevEnemyHp;
   }
 
   private spawnSingleBandit(archetype?: BanditArchetype): void {
@@ -932,29 +1348,19 @@ export class BrawlScene extends Phaser.Scene {
       {
         onAttackWhoosh: () => this.audio.playEnemyWhoosh(),
         onHitPlayer: (damage, dirX, dirY) => {
-          this.player.takeDamage(damage, dirX, dirY);
+          const victim = this.findNearestAliveHero(bandit.x, bandit.y);
+          victim?.takeDamage(damage, dirX, dirY);
         },
         onLanded: (b, impactSpeed) => {
           const strong = impactSpeed > 150;
           this.audio.playKnockdownLanding();
           this.vfx.spawnLandingImpact(b.x, b.y, strong);
-          if (strong) this.screenShake.trigger(3.2, 75, 0, 1);
-          this.eventsBus.emit('combat:enemy_landed', {
-            enemyId: b.id,
-            x: b.x,
-            y: b.y,
-            impactSpeed,
-          });
+          if (strong) this.screenShake.trigger(3.0, 70, 0, 1);
         },
         onDefeated: (b) => {
           this.enemiesDefeated += 1;
           this.audio.playEnemyDefeat();
           this.broadcastFearWave(b.x, b.y, 260, 18);
-          this.eventsBus.emit('combat:enemy_defeated', {
-            enemyId: b.id,
-            x: b.x,
-            y: b.y,
-          });
         },
         onPanic: () => this.audio.playBanditPanicSqueal(),
         onTrip: (b) => {
@@ -979,17 +1385,96 @@ export class BrawlScene extends Phaser.Scene {
     this.bandits.push(bandit);
   }
 
+  // ==================== HELPERS & DEBUG TOOLS ====================
+
+  private getPrimaryHumanHero(): Warrior | undefined {
+    return this.heroes.find((h) => h.isHumanControlled && !h.isDefeated) ?? this.heroes[0];
+  }
+
+  private findNearestAliveHero(x: number, y: number): Warrior | null {
+    let best: Warrior | null = null;
+    let bestDistSq = Infinity;
+    for (const h of this.heroes) {
+      if (h.isDefeated) continue;
+      const dx = h.x - x;
+      const dy = (h.y - y) / PERSPECTIVE_CONFIG.verticalMoveRatio;
+      const dSq = dx * dx + dy * dy;
+      if (dSq < bestDistSq) {
+        bestDistSq = dSq;
+        best = h;
+      }
+    }
+    return best;
+  }
+
+  private debugTriggerHeroSpecial(heroId?: HeroId): void {
+    const hero = heroId
+      ? this.heroes.find((h) => h.heroId === heroId)
+      : this.getPrimaryHumanHero();
+    if (!hero) {
+      this.partyOverlay.showToast(`${heroId ?? ''} 영웅이 현재 파티에 없습니다 (P로 추가)`);
+      return;
+    }
+    hero.triggerSpecial(
+      {
+        x: Math.cos(hero.facingAngle),
+        y: Math.sin(hero.facingAngle),
+        isMoving: false,
+        lightAttackPressed: false,
+        heavyAttackPressed: false,
+        specialPressed: true,
+        interactPressed: false,
+      },
+      true,
+    );
+  }
+
+  private debugSimulateFourPlayerBurst(): void {
+    this.party.setPreset('LOCAL_4P');
+    this.rebuildPartyAndEncounter();
+    // Inject simultaneous independent inputs for all 4 human players!
+    const dirs: Array<[number, number]> = [
+      [1, 0],
+      [-1, 0],
+      [0, -1],
+      [0, 1],
+    ];
+    this.party.humanSlots.forEach((slot, idx) => {
+      if (!slot.deviceId) return;
+      this.multiInput.setSimulatedInput(slot.deviceId, {
+        x: dirs[idx][0],
+        y: dirs[idx][1],
+        isMoving: true,
+        lightAttackPressed: false,
+        heavyAttackPressed: false,
+        specialPressed: true,
+        interactPressed: false,
+      });
+    });
+    this.partyOverlay.showToast('🎮 4인 동시 필살기 입력 시뮬레이션 실행!');
+  }
+
+  private clearAllHeroes(): void {
+    for (const h of this.heroes) h.destroy();
+    this.heroes.length = 0;
+  }
+
+  private clearAllProjectiles(): void {
+    for (const p of this.projectiles) p.destroy();
+    this.projectiles.length = 0;
+  }
+
   private clearAllBandits(): void {
-    for (const bandit of this.bandits) {
-      this.coordinator.releaseAttackToken(bandit.id);
-      bandit.destroy();
+    for (const b of this.bandits) {
+      this.coordinator.releaseAttackToken(b.id);
+      b.destroy();
     }
     this.bandits.length = 0;
   }
 
   private clearAllObjects(): void {
-    this.player.carriedObject = null;
-    for (const obj of this.envObjects) obj.destroy();
+    for (const h of this.heroes) h.carriedObject = null;
+    for (const o of this.envObjects) o.destroy();
     this.envObjects.length = 0;
   }
 
@@ -1006,114 +1491,89 @@ export class BrawlScene extends Phaser.Scene {
   }
 
   private resetTestRoom(): void {
-    this.clearAllBandits();
-    this.resetEnvironmentObjects();
-    this.cameraGag.reset();
-    this.hitStop.reset();
-    this.screenShake.reset();
-    this.coordinator.reset();
-    this.enemiesDefeated = 0;
-    this.comboHits = 0;
-    this.comboDecayMs = 0;
-    this.player.reset(PLAYER_CONFIG.spawnX, PLAYER_CONFIG.spawnY);
-    this.spawnStep4BanditSquad();
+    this.rebuildPartyAndEncounter();
     this.eventsBus.emit('combat:restart', {});
   }
 
   private applyLiveTuning(): void {
     this.audio.syncVolume();
-    for (const bandit of this.bandits) {
-      bandit.syncMaxHpFromTuning();
-    }
+    for (const b of this.bandits) b.syncMaxHpFromTuning();
   }
 
   private renderDebugVisuals(): void {
     this.debugVisGfx.clear();
 
-    const showActors = this.tuning.showGroundPositions || this.mayhemTuning.showActorShapes;
-    if (showActors) {
-      const pScale = getPerspectiveScale(this.player.y);
-      this.debugVisGfx.lineStyle(2, this.player.isChargeActive ? 0xc084fc : 0x22c55e, 0.9);
-      this.debugVisGfx.strokeEllipse(
-        this.player.x,
-        this.player.y,
-        this.player.collisionRadius * 2 * pScale,
-        this.player.collisionRadius * 2 * PERSPECTIVE_CONFIG.verticalMoveRatio * pScale,
-      );
-
-      for (const b of this.bandits) {
-        if (b.state === 'CAMERA_GAGGED') continue;
-        const bScale = getPerspectiveScale(b.y);
-        this.debugVisGfx.lineStyle(2, b.isChainProjectile ? 0xf97316 : 0x38bdf8, 0.85);
+    if (this.step5Tuning.showProjectiles) {
+      for (const p of this.projectiles) {
+        const s = getPerspectiveScale(p.y);
+        this.debugVisGfx.lineStyle(2, 0xfacc15, 0.95);
         this.debugVisGfx.strokeEllipse(
-          b.x,
-          b.y,
-          b.collisionRadius * 2 * bScale,
-          b.collisionRadius * 2 * PERSPECTIVE_CONFIG.verticalMoveRatio * bScale,
+          p.x,
+          p.y,
+          p.radius * 2 * s,
+          p.radius * 2 * PERSPECTIVE_CONFIG.verticalMoveRatio * s,
+        );
+      }
+    }
+
+    if (this.step5Tuning.showAiGoals) {
+      for (const h of this.heroes) {
+        if (h.isHumanControlled) continue;
+        const mem = this.aiHeroCtrl.getMemory(h.heroId);
+        if (!mem) continue;
+        this.debugVisGfx.lineStyle(1.5, h.profile.accentHex, 0.75);
+        this.debugVisGfx.lineBetween(h.x, h.y, mem.goalX, mem.goalY);
+        this.debugVisGfx.strokeCircle(mem.goalX, mem.goalY, 8);
+      }
+    }
+
+    if (this.mayhemTuning.showActorShapes || this.tuning.showGroundPositions) {
+      for (const h of this.heroes) {
+        const s = getPerspectiveScale(h.y);
+        this.debugVisGfx.lineStyle(2, h.profile.accentHex, 0.9);
+        this.debugVisGfx.strokeEllipse(
+          h.x,
+          h.y,
+          h.collisionRadius * 2 * s,
+          h.collisionRadius * 2 * PERSPECTIVE_CONFIG.verticalMoveRatio * s,
         );
       }
     }
 
     if (this.mayhemTuning.showObjectShapes) {
       for (const obj of this.envObjects) {
-        const oScale = getPerspectiveScale(obj.y);
-        this.debugVisGfx.lineStyle(2, obj.isActiveProjectile ? 0xef4444 : 0xfbbf24, 0.9);
+        const s = getPerspectiveScale(obj.y);
+        this.debugVisGfx.lineStyle(2, 0xfbbf24, 0.85);
         this.debugVisGfx.strokeEllipse(
           obj.x,
           obj.y,
-          obj.radius * 2 * oScale,
-          obj.radius * 2 * PERSPECTIVE_CONFIG.verticalMoveRatio * oScale,
+          obj.radius * 2 * s,
+          obj.radius * 2 * PERSPECTIVE_CONFIG.verticalMoveRatio * s,
         );
-      }
-      for (const hz of this.hazards) {
-        const hScale = getPerspectiveScale(hz.y);
-        this.debugVisGfx.lineStyle(1.5, 0x38bdf8, 0.8);
-        this.debugVisGfx.strokeEllipse(
-          hz.x,
-          hz.y,
-          hz.radius * 2 * hScale,
-          hz.radius * 2 * PERSPECTIVE_CONFIG.verticalMoveRatio * hScale,
-        );
-      }
-    }
-
-    if (this.mayhemTuning.showVelocityVectors) {
-      this.debugVisGfx.lineStyle(2, 0xf97316, 0.9);
-      for (const b of this.bandits) {
-        if (Math.hypot(b.vx, b.vy) > 15) {
-          this.debugVisGfx.lineBetween(b.x, b.y, b.x + b.vx * 0.25, b.y + b.vy * 0.25);
-        }
-      }
-      this.debugVisGfx.lineStyle(2, 0xfef08a, 0.95);
-      for (const obj of this.envObjects) {
-        if (Math.hypot(obj.vx, obj.vy) > 15) {
-          this.debugVisGfx.lineBetween(obj.x, obj.y, obj.x + obj.vx * 0.25, obj.y + obj.vy * 0.25);
-        }
       }
     }
 
     if (this.tuning.showHitboxes) {
-      const hb = this.player.getActiveHitbox();
-      if (hb) {
+      for (const h of this.heroes) {
+        const hb = h.getActiveHitbox();
+        if (!hb) continue;
         const fx = hb.dirX;
         const fy = hb.dirY;
         const lx = -fy;
         const ly = fx;
         const vRatio = hb.verticalRatio;
         const back = -(hb.backGrace ?? 10);
-
         const toWorld = (f: number, l: number): [number, number] => [
           hb.originX + fx * f + lx * l,
           hb.originY + (fy * f + ly * l) * vRatio,
         ];
-
         const p0 = toWorld(back, -hb.halfWidth);
         const p1 = toWorld(hb.range, -hb.halfWidth);
         const p2 = toWorld(hb.range, hb.halfWidth);
         const p3 = toWorld(back, hb.halfWidth);
 
-        this.debugVisGfx.fillStyle(0x38bdf8, 0.25);
-        this.debugVisGfx.lineStyle(2, 0x7dd3fc, 0.95);
+        this.debugVisGfx.fillStyle(h.profile.accentHex, 0.22);
+        this.debugVisGfx.lineStyle(2, h.profile.accentHex, 0.95);
         this.debugVisGfx.beginPath();
         this.debugVisGfx.moveTo(p0[0], p0[1]);
         this.debugVisGfx.lineTo(p1[0], p1[1]);
@@ -1127,10 +1587,11 @@ export class BrawlScene extends Phaser.Scene {
   }
 
   private handleShutdown(): void {
+    this.clearAllHeroes();
+    this.clearAllProjectiles();
     this.clearAllBandits();
     this.clearAllObjects();
     this.clearAllHazards();
-    this.player?.destroy();
     this.arena?.destroy();
     this.debugVisGfx?.destroy();
     this.systems?.destroy();
