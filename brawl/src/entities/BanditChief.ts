@@ -131,7 +131,7 @@ export class BanditChief {
 
     this.sprite = scene.add.sprite(0, 10, 'boss_chief_sheet', BOSS_FRAME.IDLE);
     this.sprite.setOrigin(0.5, 0.92);
-    this.sprite.setScale(0.95);
+    this.sprite.setScale(0.90);
 
     this.shoutText = scene.add
       .text(0, -148, '', {

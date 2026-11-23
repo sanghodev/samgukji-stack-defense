@@ -82,21 +82,27 @@ export class SurfaceHazard {
 
     if (this.kind === 'water_puddle') {
       const rx = this.radius * 2;
-      const ry = this.radius * 2 * PERSPECTIVE_CONFIG.verticalMoveRatio * 0.85;
-      g.fillStyle(0x0284c7, 0.48);
+      const ry = this.radius * 2 * PERSPECTIVE_CONFIG.verticalMoveRatio * 0.82;
+      // Soft wet mud rim matching courtyard pixel-art puddles
+      g.fillStyle(0x452613, 0.34);
+      g.fillEllipse(0, 1, rx * 1.12, ry * 1.14);
+      g.fillEllipse(rx * 0.18, 2, rx * 0.56, ry * 0.62);
+      // Sky-blue reflective water pool
+      g.fillStyle(0x5b8bb5, 0.68);
       g.fillEllipse(0, 0, rx, ry);
-      g.fillStyle(0x38bdf8, 0.55);
-      g.fillEllipse(-4, -2, rx * 0.78, ry * 0.72);
-      // Shimmering animated water highlight
-      g.lineStyle(2, 0xe0f2fe, 0.75);
+      g.fillEllipse(rx * 0.17, 1, rx * 0.48, ry * 0.52);
+      g.fillStyle(0x93c5fd, 0.58);
+      g.fillEllipse(-4, -1, rx * 0.72, ry * 0.68);
+      // Gentle animated water shimmer
+      g.lineStyle(1.5, 0xe0f2fe, 0.55);
       g.strokeEllipse(
-        ripple * 2.5,
-        -2,
-        rx * (0.46 + ripple * 0.03),
-        ry * (0.42 + ripple * 0.03),
+        ripple * 2.0,
+        -1,
+        rx * (0.44 + ripple * 0.03),
+        ry * (0.38 + ripple * 0.03),
       );
-      g.fillStyle(0xffffff, 0.7);
-      g.fillEllipse(-14, -7, 10, 4);
+      g.fillStyle(0xe0f2fe, 0.62);
+      g.fillEllipse(-12, -5, 9, 3.5);
     } else if (this.kind === 'spilled_food') {
       // Colorful spilled peaches, juice puddle & yellow banana peels
       g.fillStyle(0xf97316, 0.42);

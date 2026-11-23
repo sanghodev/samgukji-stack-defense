@@ -27,7 +27,7 @@ export function getDepthRatio(y: number): number {
  */
 export function getPerspectiveScale(y: number): number {
   const t = getDepthRatio(y);
-  const curved = Math.pow(t, 1.12);
+  const curved = Math.pow(t, 1.14);
   return Phaser.Math.Linear(PERSPECTIVE_CONFIG.minScale, PERSPECTIVE_CONFIG.maxScale, curved);
 }
 
@@ -37,7 +37,7 @@ export function getPerspectiveScale(y: number): number {
  */
 export function getDepthSpeedFactor(y: number): number {
   const t = getDepthRatio(y);
-  const curved = Math.pow(t, 1.12);
+  const curved = Math.pow(t, 1.14);
   return Phaser.Math.Linear(
     PERSPECTIVE_CONFIG.minSpeedFactor,
     PERSPECTIVE_CONFIG.maxSpeedFactor,

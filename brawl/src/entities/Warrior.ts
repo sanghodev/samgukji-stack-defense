@@ -207,9 +207,9 @@ export class Warrior {
   private readonly tagText: Phaser.GameObjects.Text;
   private readonly statusText: Phaser.GameObjects.Text;
 
-  private readonly zhaoYunDirScale = 0.78;
-  private readonly zhaoYunRunScale = 0.68;
-  private readonly zhaoYunActionScale = 0.68;
+  private readonly zhaoYunDirScale = 0.88;
+  private readonly zhaoYunRunScale = 0.78;
+  private readonly zhaoYunActionScale = 0.78;
   private readonly customSheetScale = 0.72;
 
   private phaseTimerMs = 0;
@@ -1951,6 +1951,8 @@ export class Warrior {
     this.container.setPosition(this.x, this.y);
     this.container.setScale(scale);
     this.container.setDepth(getDepthOrder(this.y));
+    this.tagText.setY(this.isCarrying ? -136 : -104);
+    this.statusText.setY(this.isCarrying ? -158 : -126);
     if (this.bodyState !== 'AIRBORNE_LAUNCH') {
       this.shadow.setScale(1, 1);
       this.shadow.setAlpha(0.42);

@@ -129,21 +129,21 @@ export function getWreckageFramesForKind(
   switch (kind) {
     case 'table':
       return [
-        { frame: 0, scale: 0.66 }, // Broken table top snapped in half
-        { frame: 1, scale: 0.56 }, // Broken legs & wood planks pile
-        { frame: 7, scale: 0.36 }, // Cracked porcelain bowl!
+        { frame: 0, scale: 0.48 }, // Broken table top snapped in half
+        { frame: 1, scale: 0.42 }, // Broken legs & wood planks pile
+        { frame: 7, scale: 0.28 }, // Cracked porcelain bowl!
       ];
     case 'barrel_water':
     case 'barrel_empty':
-      return [{ frame: 2, scale: 0.58 }]; // Smashed barrel staves & iron hoop
+      return [{ frame: 2, scale: 0.43 }]; // Smashed barrel staves & iron hoop
     case 'ceramic_jar':
       return [
-        { frame: 3, scale: 0.54 }, // Cracked spilling wine jar
-        { frame: 4, scale: 0.46 }, // Scattered ceramic shards
+        { frame: 3, scale: 0.40 }, // Cracked spilling wine jar
+        { frame: 4, scale: 0.34 }, // Scattered ceramic shards
       ];
     case 'fruit_basket':
       return [
-        { frame: rng() < 0.5 ? 5 : 6, scale: 0.56 }, // Overturned apple basket OR dumpling steamer!
+        { frame: rng() < 0.5 ? 5 : 6, scale: 0.39 }, // Overturned apple basket OR dumpling steamer!
       ];
   }
 }

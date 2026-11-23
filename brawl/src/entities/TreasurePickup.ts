@@ -26,16 +26,16 @@ export class TreasurePickup {
     this.y = y;
     this.labelKr = labelKr;
 
-    const shadow = scene.add.ellipse(0, 4, 42, 14, 0x1c120c, 0.42);
+    const shadow = scene.add.ellipse(0, 4, 36, 12, 0x1c120c, 0.42);
     this.ring = scene.add.graphics();
     this.ring.lineStyle(2.5, 0xfacc15, 0.85);
-    this.ring.strokeEllipse(0, 4, 52, 20);
+    this.ring.strokeEllipse(0, 4, 46, 18);
 
     this.sprite = scene.textures.exists('mayhem_props')
-      ? scene.add.image(0, -22, 'mayhem_props', 6).setOrigin(0.5).setScale(0.52)
+      ? scene.add.image(0, -18, 'mayhem_props', 6).setOrigin(0.5).setScale(0.42)
       : scene.add.image(0, -18, 'treasure_chest_icon').setOrigin(0.5);
     this.label = scene.add
-      .text(0, -48, `✨ ${labelKr}`, {
+      .text(0, -44, `✨ ${labelKr}`, {
         fontFamily: 'Malgun Gothic, Apple SD Gothic Neo, sans-serif',
         fontSize: '12px',
         fontStyle: 'bold',

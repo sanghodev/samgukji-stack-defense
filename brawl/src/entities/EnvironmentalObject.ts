@@ -118,11 +118,11 @@ export class EnvironmentalObject {
     this.bodyGfx = scene.add.graphics();
     if (scene.textures.exists('mayhem_props')) {
       const frameMap: Record<EnvObjectKind, { frame: number; scale: number; yOff: number }> = {
-        table: { frame: 0, scale: 0.72, yOff: 6 },
-        barrel_water: { frame: 1, scale: 0.56, yOff: 5 },
-        barrel_empty: { frame: 2, scale: 0.56, yOff: 5 },
-        ceramic_jar: { frame: 3, scale: 0.52, yOff: 5 },
-        fruit_basket: { frame: Math.random() < 0.5 ? 4 : 5, scale: 0.52, yOff: 5 },
+        table: { frame: 0, scale: 0.50, yOff: 5 },
+        barrel_water: { frame: 1, scale: 0.43, yOff: 5 },
+        barrel_empty: { frame: 2, scale: 0.43, yOff: 5 },
+        ceramic_jar: { frame: 3, scale: 0.40, yOff: 5 },
+        fruit_basket: { frame: Math.random() < 0.5 ? 4 : 5, scale: 0.38, yOff: 5 },
       };
       const cfg = frameMap[kind];
       this.bodySprite = scene.add
@@ -135,18 +135,18 @@ export class EnvironmentalObject {
     }
 
     // Small crisp pickup indicator shown when Hero is within grab reach
-    const pillBg = scene.add.rectangle(0, 0, 56, 18, 0x1c120c, 0.88);
+    const pillBg = scene.add.rectangle(0, 0, 52, 16, 0x1c120c, 0.88);
     pillBg.setStrokeStyle(1, 0xfbbf24, 0.9);
     const pillTxt = scene.add
       .text(0, 0, 'SPACE', {
         fontFamily: 'Consolas, Menlo, monospace',
-        fontSize: '10px',
+        fontSize: '9px',
         fontStyle: 'bold',
         color: '#fde047',
       })
       .setOrigin(0.5);
     this.promptBadge = scene.add
-      .container(0, -this.spec.radius * 2.2 - 14, [pillBg, pillTxt])
+      .container(0, -56, [pillBg, pillTxt])
       .setVisible(false);
 
     const children: Phaser.GameObjects.GameObject[] = [this.shadow, this.bodyGfx];

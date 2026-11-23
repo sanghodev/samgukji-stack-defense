@@ -2087,18 +2087,18 @@ export class BrawlScene extends Phaser.Scene {
   }
 
   private spawnInitialEnvironment(): void {
-    this.spawnObject('table', 490, 488);
-    this.spawnObject('table', 790, 494);
-    this.spawnObject('table', 640, 344);
-    this.spawnObject('barrel_water', 436, 378);
-    this.spawnObject('barrel_water', 848, 384);
-    this.spawnObject('barrel_empty', 340, 566);
-    this.spawnObject('ceramic_jar', 575, 294);
-    this.spawnObject('ceramic_jar', 705, 294);
-    this.spawnObject('ceramic_jar', 288, 456);
-    this.spawnObject('ceramic_jar', 988, 462);
-    this.spawnObject('fruit_basket', 385, 616);
-    this.spawnObject('fruit_basket', 918, 608);
+    this.spawnObject('table', 485, 482);
+    this.spawnObject('table', 815, 488);
+    this.spawnObject('table', 640, 326);
+    this.spawnObject('barrel_water', 425, 368);
+    this.spawnObject('barrel_water', 855, 374);
+    this.spawnObject('barrel_empty', 310, 566);
+    this.spawnObject('ceramic_jar', 575, 272);
+    this.spawnObject('ceramic_jar', 705, 272);
+    this.spawnObject('ceramic_jar', 278, 628);
+    this.spawnObject('ceramic_jar', 996, 456);
+    this.spawnObject('fruit_basket', 392, 608);
+    this.spawnObject('fruit_basket', 918, 606);
     this.spawnHazard('water_puddle', 640, 412);
   }
 

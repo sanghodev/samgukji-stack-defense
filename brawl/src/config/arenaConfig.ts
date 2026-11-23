@@ -8,32 +8,32 @@ export const GAME_HEIGHT = 720;
  */
 export const ARENA_BOUNDS = {
   /** Far rear playable edge directly in front of the distant castle gate */
-  backY: 228,
+  backY: 226,
   /** Front playable edge closest to the viewer */
-  frontY: 692,
-  /** Narrower X boundaries at the far rear (backY) for strong spatial depth */
-  backLeftX: 356,
-  backRightX: 924,
+  frontY: 696,
+  /** Narrower X boundaries at the far rear (backY) aligning tents & castle gate */
+  backLeftX: 295,
+  backRightX: 1045,
   /** Wide X boundaries at the foreground (frontY) */
-  frontLeftX: 28,
-  frontRightX: 1252,
-  /** One-point perspective vanishing point above the distant castle gate */
+  frontLeftX: 36,
+  frontRightX: 1244,
+  /** One-point perspective vanishing point aligned with the castle gate arch horizon */
   vanishingX: 640,
   vanishingY: 118,
 } as const;
 
 /**
- * Strong 2.5D perspective scaling so moving toward the distant castle gate
- * creates an unmistakable sense of deep space.
+ * Authentic 2.5D beat-'em-up perspective scaling (~4x depth growth) so characters & props
+ * shrink naturally toward the distant castle gate and grow prominently in the foreground.
  */
 export const PERSPECTIVE_CONFIG = {
   /** Character scale at the far rear near the castle gate (backY) */
-  minScale: 0.46,
+  minScale: 0.42,
   /** Character scale at the foreground closest to the viewer (frontY) */
-  maxScale: 1.22,
+  maxScale: 1.66,
   /** Screen-space movement speed multiplier at back vs front */
-  minSpeedFactor: 0.56,
-  maxSpeedFactor: 1.12,
+  minSpeedFactor: 0.48,
+  maxSpeedFactor: 1.24,
   /** Foreshortening ratio for depth (up/down) movement relative to horizontal */
   verticalMoveRatio: 0.68,
 } as const;

@@ -67,10 +67,11 @@ export class MarketplaceArena {
    */
   private buildPerimeterColliders(): void {
     const bumpers: Array<{ id: string; kind: PropKind; x: number; y: number; r: number }> = [
-      { id: 'bg_crate_left_mid', kind: 'crate_stack', x: 58, y: 365, r: 44 },
-      { id: 'bg_crate_bot_left', kind: 'crate_stack', x: 105, y: 665, r: 62 },
-      { id: 'bg_wagon_right', kind: 'stall_weapons', x: 1225, y: 270, r: 52 },
-      { id: 'bg_crate_bot_right', kind: 'crate_stack', x: 1215, y: 675, r: 54 },
+      { id: 'bg_tent_left', kind: 'stall_fruit', x: 255, y: 232, r: 58 },
+      { id: 'bg_crate_left_mid', kind: 'crate_stack', x: 54, y: 362, r: 52 },
+      { id: 'bg_crate_bot_left', kind: 'crate_stack', x: 112, y: 676, r: 82 },
+      { id: 'bg_wagon_right', kind: 'stall_weapons', x: 1218, y: 268, r: 64 },
+      { id: 'bg_crate_bot_right', kind: 'crate_stack', x: 1185, y: 682, r: 76 },
     ];
 
     for (const b of bumpers) {
