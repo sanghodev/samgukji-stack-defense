@@ -956,25 +956,29 @@ export class BrawlScene extends Phaser.Scene {
   private openTreasureRewardModal(): void {
     this.audio.playTreasurePickup();
 
-    // AI heroes auto-pick their next best hero evolution upgrade silently & smartly!
-    const humanOffers: HumanTreasureOffer[] = [];
+    const grantedLabels: string[] = [];
     for (const h of this.heroes) {
       const choices = rollTreasureChoices(h.heroId, h.acquiredTreasures, this.stageDirector.rng);
       if (choices.length === 0) continue;
 
+      const picked = choices[0];
       if (h.isHumanControlled) {
-        humanOffers.push({
-          slotIndex: h.slotIndex,
-          heroId: h.heroId,
-          choices,
-        });
+        this.applyTreasureToHero(h.heroId, picked.id);
+        grantedLabels.push(`${h.profile.displayName}: ${picked.nameKr}`);
       } else {
-        // AI picks its hero-specific evolution tier first (choices[0])
-        h.addTreasure(choices[0].id);
+        h.addTreasure(picked.id);
       }
     }
 
-    this.stageOverlay.openTreasureSelection(humanOffers);
+    if (grantedLabels.length > 0) {
+      this.stageOverlay.showScoreToast(`✨ 보물 자동 획득! ${grantedLabels.join(' · ')}`);
+    }
+
+    // Advance immediately without pausing combat with a modal popup
+    if (this.stageDirector.state === 'TREASURE_REWARD') {
+      const res = this.stageDirector.finishTreasureReward();
+      this.handleStageStepResult(res);
+    }
   }
 
   private applyTreasureToHero(heroId: HeroId, treasureId: string): void {
