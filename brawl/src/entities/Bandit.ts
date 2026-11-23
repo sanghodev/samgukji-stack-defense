@@ -423,14 +423,10 @@ export class Bandit {
       this.state === 'FLEE'
     ) {
       this.releaseCurrentCover();
-      if (this.fear >= 55 || this.hp <= this.maxHp * 0.45) {
-        this.enterSurrendered(coordinator);
-      } else {
-        this.state = 'APPROACH';
-        this.reactionText.setText('에라 모르겠다!');
-        this.reactionText.setColor('#fb923c');
-        this.reactionText.setVisible(true);
-      }
+      this.fear = Math.min(this.fear, 35);
+      this.fearState = 'CALM';
+      this.state = 'APPROACH';
+      void coordinator;
     }
   }
 
@@ -1436,7 +1432,7 @@ export class Bandit {
   private enterPanicState(): void {
     this.clearSkillTelegraph();
     this.state = 'FLEE';
-    this.stateTimerMs = 1750 + Math.random() * 650;
+    this.stateTimerMs = 1150 + Math.random() * 500;
     this.reactionText.setText(this.archetype === 'coward' ? '살려줘!!' : '도망쳐!');
     this.reactionText.setColor('#38bdf8');
     this.reactionText.setVisible(true);
@@ -1448,7 +1444,7 @@ export class Bandit {
     if (thresh > 100 || this.fear < thresh) return false;
     const hpRatio = this.hp / Math.max(1, this.maxHp);
     const activeAllies = otherBandits.filter((b) => b !== this && !b.isNeutralized).length;
-    return hpRatio <= 0.5 || activeAllies <= 2;
+    return hpRatio <= 0.25 && activeAllies <= 2 && Math.random() < 0.18;
   }
 
   private enterSurrendered(coordinator: CombatCoordinator): void {

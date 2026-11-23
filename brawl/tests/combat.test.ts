@@ -790,3 +790,31 @@ test('All 11 street-market goods and 10 diverse enemy archetypes (archer, bomber
   assert.equal(pickEnemySkillForArchetype('grappler', 250), 'NONE');
   assert.equal(pickEnemySkillForArchetype('soldier', 150), 'DASH_CLEAVE');
 });
+
+import { evaluateHealthDrop, HEALTH_PICKUP_SPECS } from '../src/core/HeroDefenseMath.ts';
+
+test('Health recovery drops enforce cap, cooldown, mercy scaling, and most enemies do not surrender', () => {
+  assert.equal(Object.keys(HEALTH_PICKUP_SPECS).length, 3);
+  // Respects simultaneous floor cap (2) and cooldown (8.5s)
+  assert.equal(
+    evaluateHealthDrop({ source: 'PROP_FOOD', avgPartyHpRatio: 0.2, activeHealCount: 2, msSinceLastDrop: 20000 }, () => 0.01),
+    null,
+  );
+  assert.equal(
+    evaluateHealthDrop({ source: 'PROP_FOOD', avgPartyHpRatio: 0.2, activeHealCount: 0, msSinceLastDrop: 4000 }, () => 0.01),
+    null,
+  );
+  // Drops a potion when eligible and roll succeeds
+  const dropped = evaluateHealthDrop(
+    { source: 'PROP_FOOD', avgPartyHpRatio: 0.35, activeHealCount: 0, msSinceLastDrop: 12000 },
+    () => 0.05,
+  );
+  assert.ok(dropped === 'steamed_bun' || dropped === 'red_potion' || dropped === 'golden_elixir');
+
+  // Rebalanced surrender: only coward can surrender (>= 96), all other 9 archetypes never surrender (101)
+  assert.ok(BANDIT_ARCHETYPES.coward.surrenderThreshold >= 95);
+  for (const key of ['overconfident', 'clumsy', 'sneaky', 'stubborn', 'elite', 'archer', 'bomber', 'grappler', 'soldier'] as const) {
+    assert.ok(BANDIT_ARCHETYPES[key].surrenderThreshold > 100, `${key} should not surrender during regular waves`);
+  }
+});
+

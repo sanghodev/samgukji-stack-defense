@@ -73,6 +73,10 @@ export class BootScene extends Phaser.Scene {
       frameWidth: 128,
       frameHeight: 128,
     });
+    this.load.spritesheet('heal_items', '../assets/sprites/heal_items.png', {
+      frameWidth: 96,
+      frameHeight: 96,
+    });
     this.load.spritesheet('broken_wreckage', '../assets/sprites/broken_wreckage.png', {
       frameWidth: 128,
       frameHeight: 128,

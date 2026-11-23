@@ -228,3 +228,97 @@ export function getHeroSpecialPoseFrames(heroId: HeroId): {
       return { carryFrame: 3, koFrame: 7 };
   }
 }
+
+// ==================== HEALTH RECOVERY PICKUP BALANCE ====================
+
+export type HealthPickupKind = 'steamed_bun' | 'red_potion' | 'golden_elixir';
+export type HealthDropSource = 'PROP_FOOD' | 'PROP_OTHER' | 'ENEMY_ELITE' | 'ENEMY_NORMAL';
+
+export interface HealthPickupSpec {
+  readonly kind: HealthPickupKind;
+  readonly frame: number;
+  readonly labelKr: string;
+  readonly healAmount: number;
+  readonly glowColor: number;
+  readonly bonusScoreIfFull: number;
+}
+
+export const HEALTH_PICKUP_SPECS: Record<HealthPickupKind, HealthPickupSpec> = {
+  steamed_bun: {
+    kind: 'steamed_bun',
+    frame: 0,
+    labelKr: '왕만두',
+    healAmount: 28,
+    glowColor: 0x4ade80,
+    bonusScoreIfFull: 120,
+  },
+  red_potion: {
+    kind: 'red_potion',
+    frame: 1,
+    labelKr: '체력약',
+    healAmount: 48,
+    glowColor: 0xfb7185,
+    bonusScoreIfFull: 180,
+  },
+  golden_elixir: {
+    kind: 'golden_elixir',
+    frame: 2,
+    labelKr: '황금 선약',
+    healAmount: 85,
+    glowColor: 0xfacc15,
+    bonusScoreIfFull: 300,
+  },
+};
+
+export interface HealthDropContext {
+  source: HealthDropSource;
+  avgPartyHpRatio: number; // 0..1
+  activeHealCount: number;
+  msSinceLastDrop: number;
+}
+
+/**
+ * Balanced arcade health recovery drop evaluator:
+ * - Caps simultaneous floor heal pickups at 2 and enforces an 8.5s cooldown so drops feel rewarding, never spammy.
+ * - Dynamically scales probability and tier upward when party HP is low (mercy scaling) and down when healthy.
+ */
+export function evaluateHealthDrop(
+  ctx: HealthDropContext,
+  rng = Math.random,
+): HealthPickupKind | null {
+  if (ctx.activeHealCount >= 2 || ctx.msSinceLastDrop < 8500) {
+    return null;
+  }
+
+  const baseChance: Record<HealthDropSource, number> = {
+    PROP_FOOD: 0.11,
+    PROP_OTHER: 0.045,
+    ENEMY_ELITE: 0.17,
+    ENEMY_NORMAL: 0.025,
+  };
+
+  const hp = Math.max(0, Math.min(1, ctx.avgPartyHpRatio));
+  let mercyMul = 1.0;
+  if (hp >= 0.92) {
+    mercyMul = 0.45;
+  } else if (hp < 0.38) {
+    mercyMul = 2.25;
+  } else if (hp < 0.65) {
+    mercyMul = 1.48;
+  }
+
+  const finalChance = Math.min(0.42, baseChance[ctx.source] * mercyMul);
+  if (rng() >= finalChance) {
+    return null;
+  }
+
+  // Pick tier weighted by source and injury urgency
+  const tierRoll = rng();
+  const elixirCutoff = ctx.source === 'ENEMY_ELITE' ? 0.24 : hp < 0.45 ? 0.18 : 0.08;
+  const potionCutoff = elixirCutoff + (hp < 0.65 ? 0.42 : 0.34);
+
+  if (tierRoll < elixirCutoff) return 'golden_elixir';
+  if (tierRoll < potionCutoff) return 'red_potion';
+  return 'steamed_bun';
+}
+

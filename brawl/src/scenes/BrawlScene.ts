@@ -34,6 +34,11 @@ import {
   TREASURE_BY_ID,
 } from '../config/treasureConfig';
 import { check25DMeleeHit } from '../core/CombatMath';
+import {
+  evaluateHealthDrop,
+  HealthDropSource,
+  HealthPickupKind,
+} from '../core/HeroDefenseMath';
 import { EventBus } from '../core/EventBus';
 import { sweptCircleHit25D } from '../core/MayhemPhysics';
 import { PartyManager } from '../core/PartyManager';
@@ -49,6 +54,7 @@ import { Bandit } from '../entities/Bandit';
 import { BanditChief } from '../entities/BanditChief';
 import { BrokenWreckage, getWreckageFramesForKind } from '../entities/BrokenWreckage';
 import { EnvironmentalObject } from '../entities/EnvironmentalObject';
+import { HealthPickup } from '../entities/HealthPickup';
 import { Projectile } from '../entities/Projectile';
 import { SurfaceHazard } from '../entities/SurfaceHazard';
 import { TreasurePickup } from '../entities/TreasurePickup';
@@ -125,6 +131,7 @@ export class BrawlScene extends Phaser.Scene {
   private readonly wreckages: BrokenWreckage[] = [];
   private readonly hazards: SurfaceHazard[] = [];
   private readonly treasurePickups: TreasurePickup[] = [];
+  private readonly healthPickups: HealthPickup[] = [];
   private boss: BanditChief | null = null;
 
   private nextBanditSeq = 1;
@@ -133,6 +140,8 @@ export class BrawlScene extends Phaser.Scene {
   private nextHazardSeq = 1;
   private nextProjectileSeq = 1;
   private nextTreasureSeq = 1;
+  private nextHealthSeq = 1;
+  private msSinceLastHealthDrop = 10000;
   private readonly MAX_WRECKAGES = 72;
 
   private enemiesDefeated = 0;
@@ -510,6 +519,7 @@ export class BrawlScene extends Phaser.Scene {
 
       this.updatePickupPrompts();
       this.updateTreasurePickups(delta);
+      this.updateHealthPickups(delta);
       this.updateProjectiles(delta);
 
       // Update environmental objects + thrown object impact vs Boss!
@@ -1040,6 +1050,119 @@ export class BrawlScene extends Phaser.Scene {
         }
       }
     }
+  }
+
+  private computeAvgPartyHpRatio(): number {
+    const alive = this.heroes.filter((h) => !h.isDefeated);
+    if (alive.length === 0) return 0;
+    let sum = 0;
+    for (const h of alive) {
+      sum += h.hp / Math.max(1, h.maxHp);
+    }
+    return sum / alive.length;
+  }
+
+  private trySpawnHealthDrop(x: number, y: number, source: HealthDropSource): void {
+    const kind = evaluateHealthDrop({
+      source,
+      avgPartyHpRatio: this.computeAvgPartyHpRatio(),
+      activeHealCount: this.healthPickups.length,
+      msSinceLastDrop: this.msSinceLastHealthDrop,
+    });
+    if (!kind) return;
+    this.spawnHealthPickup(x, y, kind);
+  }
+
+  private spawnHealthPickup(x: number, y: number, kind: HealthPickupKind): void {
+    this.msSinceLastHealthDrop = 0;
+    const pickup = new HealthPickup(
+      this,
+      `heal_${this.nextHealthSeq++}`,
+      kind,
+      x,
+      y,
+    );
+    this.healthPickups.push(pickup);
+  }
+
+  private updateHealthPickups(deltaMs: number): void {
+    this.msSinceLastHealthDrop += deltaMs;
+    const anyInjuredHuman = this.heroes.some(
+      (h) => !h.isDefeated && h.isHumanControlled && h.hp < h.maxHp,
+    );
+
+    for (let i = this.healthPickups.length - 1; i >= 0; i--) {
+      const p = this.healthPickups[i];
+      p.update(deltaMs);
+      if (p.expired) {
+        p.destroy();
+        this.healthPickups.splice(i, 1);
+        continue;
+      }
+      if (!p.isPickable) continue;
+
+      // Prefer injured heroes first (and let injured human players take priority over healthy AI!)
+      let consumer: Warrior | null = null;
+      for (const h of this.heroes) {
+        if (h.isDefeated) continue;
+        const d = Math.hypot(h.x - p.x, (h.y - p.y) / PERSPECTIVE_CONFIG.verticalMoveRatio);
+        if (d > 48) continue;
+
+        const isInjured = h.hp < h.maxHp;
+        if (isInjured) {
+          // If an AI is above 70% HP while a human player is hurt, leave the potion for the player!
+          if (!h.isHumanControlled && anyInjuredHuman && h.hp / Math.max(1, h.maxHp) > 0.7) {
+            continue;
+          }
+          consumer = h;
+          break;
+        } else if (h.isHumanControlled && p.allowFullHpPickup) {
+          consumer = h;
+          break;
+        }
+      }
+
+      if (consumer) {
+        p.markCollected();
+        const healed = Math.min(consumer.maxHp - consumer.hp, p.spec.healAmount);
+        if (healed > 0) {
+          consumer.hp = Math.min(consumer.maxHp, consumer.hp + healed);
+          this.stageOverlay.showScoreToast(`💚 ${p.spec.labelKr} 획득! +${healed} HP`);
+        } else {
+          this.stageDirector.stats.totalScore += p.spec.bonusScoreIfFull;
+          this.stageOverlay.showScoreToast(`✨ ${p.spec.labelKr} 보너스 +${p.spec.bonusScoreIfFull}점`);
+        }
+        this.audio.playTreasurePickup();
+        this.spawnHealAuraEffect(consumer.x, consumer.y, p.spec.glowColor);
+        p.destroy();
+        this.healthPickups.splice(i, 1);
+      }
+    }
+  }
+
+  private spawnHealAuraEffect(x: number, y: number, color: number): void {
+    const ring = this.add.graphics();
+    ring.setDepth(getDepthOrder(y) + 28);
+    const st = { t: 0 };
+    this.tweens.add({
+      targets: st,
+      t: 1,
+      duration: 460,
+      ease: 'Cubic.easeOut',
+      onUpdate: () => {
+        ring.clear();
+        const p = st.t;
+        const sc = getPerspectiveScale(y);
+        const rad = (24 + p * 36) * sc;
+        ring.lineStyle(3.5, color, (1 - p) * 0.95);
+        ring.strokeEllipse(x, y - p * 34 * sc, rad * 1.6, rad * 0.85);
+        ring.fillStyle(color, (1 - p) * 0.35);
+        ring.fillCircle(x - 12 * sc, y - (24 + p * 46) * sc, 4 * sc);
+        ring.fillCircle(x + 14 * sc, y - (18 + p * 54) * sc, 3.5 * sc);
+        ring.fillCircle(x, y - (32 + p * 60) * sc, 4.5 * sc);
+      },
+      onComplete: () => ring.destroy(),
+    });
   }
 
   private handleStageVictory(): void {
@@ -2417,6 +2540,7 @@ export class BrawlScene extends Phaser.Scene {
     baseAmount: number,
   ): void {
     const rSq = radius * radius;
+    const damped = baseAmount * 0.55;
     for (const bandit of this.bandits) {
       if (bandit.isNeutralized) continue;
       const dx = bandit.x - originX;
@@ -2424,7 +2548,7 @@ export class BrawlScene extends Phaser.Scene {
       const distSq = dx * dx + dy * dy;
       if (distSq <= rSq) {
         const falloff = 1 - Math.sqrt(distSq) / (radius * 1.25);
-        bandit.addFear(baseAmount * Math.max(0.35, falloff), this.coordinator);
+        bandit.addFear(damped * Math.max(0.35, falloff), this.coordinator);
       }
     }
   }
@@ -2532,6 +2656,17 @@ export class BrawlScene extends Phaser.Scene {
     // Leave persistent 16-bit broken wreckage scattered on the muddy floor with bounce physics!
     this.spawnWreckageForObject(obj, dirX, dirY);
     this.kickNearbyWreckage(obj.x, obj.y, 110, 200, dirX, dirY, 170);
+
+    // Occasional balanced health recovery drop (higher rate from food/market goods!)
+    const isFoodGood =
+      obj.spec.kind === 'meat_stall' ||
+      obj.spec.kind === 'fruit_basket' ||
+      obj.spec.kind === 'bean_sack' ||
+      obj.spec.kind === 'grain_sack' ||
+      obj.spec.kind === 'spice_stall' ||
+      obj.spec.kind === 'fish_tub' ||
+      obj.spec.kind === 'ceramic_jar';
+    this.trySpawnHealthDrop(obj.x, obj.y, isFoodGood ? 'PROP_FOOD' : 'PROP_OTHER');
 
     if (obj.spec.kind === 'table') {
       this.audio.playTableShatter();
@@ -2921,6 +3056,9 @@ export class BrawlScene extends Phaser.Scene {
           if (b.archetype === 'elite') {
             this.spawnTreasureDrop(b.x, b.y, '정예 보물 상자!');
             this.stageOverlay.showScoreToast('🏆 정예 산적 제압! 보물 드롭!');
+          } else {
+            const isTough = b.archetype === 'grappler' || b.archetype === 'bomber' || b.archetype === 'soldier';
+            this.trySpawnHealthDrop(b.x, b.y, isTough ? 'ENEMY_ELITE' : 'ENEMY_NORMAL');
           }
         },
         onPanic: () => this.audio.playBanditPanicSqueal(),
@@ -3294,6 +3432,9 @@ export class BrawlScene extends Phaser.Scene {
   private clearTreasurePickups(): void {
     for (const t of this.treasurePickups) t.destroy();
     this.treasurePickups.length = 0;
+    for (const hp of this.healthPickups) hp.destroy();
+    this.healthPickups.length = 0;
+    this.msSinceLastHealthDrop = 10000;
   }
 
   private clearAllObjects(): void {
