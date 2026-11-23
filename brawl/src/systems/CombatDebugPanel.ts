@@ -1,8 +1,16 @@
 import { CombatTuning } from '../config/combatConfig';
 import { AiAggressionMode, HeroId, Step5Tuning } from '../config/heroConfig';
 import { EnvObjectKind, MayhemTuning } from '../config/mayhemConfig';
+import {
+  applyCombatFeelPreset,
+  applyImportedTuningJson,
+  PolishSettings,
+  serializeTuningJson,
+} from '../config/polishConfig';
 import { BanditArchetype, Step4Tuning } from '../config/step4Config';
 import { IGameSystem } from './ModuleRegistry';
+
+export type QualityTestSceneId = 'A' | 'B' | 'C' | 'D' | 'E' | 'F' | 'G' | 'H';
 
 export interface CombatDebugPanelActions {
   onSpawnBandit: (archetype?: BanditArchetype) => void;
@@ -37,11 +45,15 @@ export interface CombatDebugPanelActions {
   onForceVictory?: () => void;
   onForceDefeat?: () => void;
   onReturnMainMenu?: () => void;
+  // Step 7 Quality Test Scenes A-H & Preset Notifications
+  onRunQualityTest?: (id: QualityTestSceneId) => void;
+  onPresetApplied?: (label: string) => void;
 }
 
 /**
- * Toggleable developer tuning panel (F2) covering Step 2-6:
- * Stage Director / Boss / Treasure Evolution / Party / AI / Local Multiplayer.
+ * Toggleable developer tuning panel (F2) covering Step 2-7:
+ * A/B Feel Presets / Performance Profiler / Audio Buses / Accessibility /
+ * Quality Test Scenes A-H / Stage Director / Boss / Treasure / Multiplayer.
  */
 export class CombatDebugPanel implements IGameSystem {
   public readonly id = 'combat-debug-panel';
@@ -50,9 +62,11 @@ export class CombatDebugPanel implements IGameSystem {
   private readonly mayhem: MayhemTuning;
   private readonly step4: Step4Tuning;
   private readonly step5: Step5Tuning;
+  private readonly polish: PolishSettings;
   private readonly actions: CombatDebugPanelActions;
   private root?: HTMLDivElement;
   private stageStatusEl?: HTMLDivElement;
+  private perfStatusEl?: HTMLDivElement;
   private visible = false;
 
   constructor(
@@ -60,18 +74,26 @@ export class CombatDebugPanel implements IGameSystem {
     mayhem: MayhemTuning,
     step4: Step4Tuning,
     step5: Step5Tuning,
+    polish: PolishSettings,
     actions: CombatDebugPanelActions,
   ) {
     this.tuning = tuning;
     this.mayhem = mayhem;
     this.step4 = step4;
     this.step5 = step5;
+    this.polish = polish;
     this.actions = actions;
   }
 
   public updateStageStatus(text: string): void {
     if (this.stageStatusEl && this.visible) {
       this.stageStatusEl.textContent = text;
+    }
+  }
+
+  public updatePerfStatus(text: string): void {
+    if (this.perfStatusEl && this.visible) {
+      this.perfStatusEl.textContent = text;
     }
   }
 
@@ -84,10 +106,10 @@ export class CombatDebugPanel implements IGameSystem {
       'position: fixed',
       'top: 12px',
       'right: 12px',
-      'width: 326px',
+      'width: 332px',
       'max-height: calc(100vh - 24px)',
       'overflow-y: auto',
-      'background: rgba(11, 16, 27, 0.94)',
+      'background: rgba(11, 16, 27, 0.95)',
       'color: #e2e8f0',
       'border: 1px solid rgba(56, 189, 248, 0.72)',
       'border-radius: 8px',
@@ -104,7 +126,7 @@ export class CombatDebugPanel implements IGameSystem {
     header.style.cssText =
       'display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;padding-bottom:6px;border-bottom:1px solid rgba(148,163,184,0.25);';
     header.innerHTML =
-      '<strong style="color:#fde047;font-size:12px;">⚔ STEP 6 STAGE DEV PANEL [F2]</strong>';
+      '<strong style="color:#fde047;font-size:12px;">⚔ STEP 7 ARCADE POLISH LAB [F2]</strong>';
 
     const closeBtn = document.createElement('button');
     closeBtn.textContent = '✕';
@@ -113,6 +135,103 @@ export class CombatDebugPanel implements IGameSystem {
     closeBtn.onclick = () => this.setVisible(false);
     header.appendChild(closeBtn);
     panel.appendChild(header);
+
+    // ===== STEP 7: A/B PRESETS, PERFORMANCE, AUDIO BUSES & TEST SCENES =====
+    this.addSectionTitle(panel, 'A/B COMBAT FEEL & PERFORMANCE (STEP 7)');
+
+    const perfLine = document.createElement('div');
+    perfLine.style.cssText =
+      'background:#0f172a;border:1px solid #1e3a8a;border-radius:5px;padding:5px 7px;margin-bottom:6px;color:#4ade80;font-size:10px;line-height:1.45;';
+    perfLine.textContent = 'FPS: 60 | P50: 16.7ms | P95: 16.7ms';
+    panel.appendChild(perfLine);
+    this.perfStatusEl = perfLine;
+
+    const abRow = document.createElement('div');
+    abRow.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;gap:5px;margin-bottom:6px;';
+    abRow.appendChild(
+      this.makeButton('A: ARCADE CLASSIC', '#0369a1', () => {
+        applyCombatFeelPreset('ARCADE_CLASSIC', this.tuning, this.mayhem, this.step4, this.polish);
+        this.actions.onTuningChanged();
+        this.actions.onPresetApplied?.('Preset A: ARCADE CLASSIC 적용');
+      }),
+    );
+    abRow.appendChild(
+      this.makeButton('B: MAX MAYHEM', '#b45309', () => {
+        applyCombatFeelPreset('MAXIMUM_MAYHEM', this.tuning, this.mayhem, this.step4, this.polish);
+        this.actions.onTuningChanged();
+        this.actions.onPresetApplied?.('Preset B: MAXIMUM MAYHEM 적용');
+      }),
+    );
+    panel.appendChild(abRow);
+
+    // Accessibility & Audio Bus Controls
+    this.addCheckbox(panel, 'Reduce Motion (접근성)', () => this.polish.reduceMotion, (v) => {
+      this.polish.reduceMotion = v;
+      this.actions.onTuningChanged();
+    });
+    this.addSlider(panel, 'Master Volume', 0, 1.3, 0.05, () => this.polish.masterVolume, (v) => {
+      this.polish.masterVolume = v;
+      this.actions.onTuningChanged();
+    }, (v) => `${Math.round(v * 100)}%`);
+    this.addSlider(panel, 'Music Volume', 0, 1.2, 0.05, () => this.polish.musicVolume, (v) => {
+      this.polish.musicVolume = v;
+      this.actions.onTuningChanged();
+    }, (v) => `${Math.round(v * 100)}%`);
+    this.addSlider(panel, 'Music Ducking', 0, 0.85, 0.05, () => this.polish.musicDuckingAmount, (v) => {
+      this.polish.musicDuckingAmount = v;
+      this.actions.onTuningChanged();
+    }, (v) => `${Math.round(v * 100)}%`);
+    this.addSlider(panel, 'Max Audio Voices', 8, 32, 2, () => this.polish.maxAudioVoices, (v) => {
+      this.polish.maxAudioVoices = v;
+      this.actions.onTuningChanged();
+    }, (v) => `${Math.round(v)}`);
+    this.addSlider(panel, 'Max Hit-Stop Cap (ms)', 40, 130, 5, () => this.polish.maxHitStopCapMs, (v) => {
+      this.polish.maxHitStopCapMs = v;
+      this.actions.onTuningChanged();
+    }, (v) => `${Math.round(v)}ms`);
+
+    // JSON Export / Import
+    const ioRow = document.createElement('div');
+    ioRow.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;gap:5px;margin:6px 0;';
+    ioRow.appendChild(
+      this.makeButton('📋 Export JSON', '#334155', () => {
+        const json = serializeTuningJson(this.tuning, this.mayhem, this.step4, this.polish);
+        if (navigator.clipboard?.writeText) {
+          void navigator.clipboard.writeText(json);
+        }
+        window.prompt('Step 7 Tuning JSON (복사하세요):', json);
+      }),
+    );
+    ioRow.appendChild(
+      this.makeButton('📥 Import JSON', '#334155', () => {
+        const raw = window.prompt('Step 7 Tuning JSON을 붙여넣으세요:');
+        if (!raw) return;
+        const ok = applyImportedTuningJson(raw, this.tuning, this.mayhem, this.step4, this.polish);
+        this.actions.onTuningChanged();
+        this.actions.onPresetApplied?.(ok ? 'JSON 튜닝 불러오기 완료!' : 'JSON 형식이 올바르지 않습니다');
+      }),
+    );
+    panel.appendChild(ioRow);
+
+    // Quality Test Scenes A-H
+    const testRow = document.createElement('div');
+    testRow.style.cssText = 'display:grid;grid-template-columns:repeat(4,1fr);gap:3px;margin-bottom:8px;';
+    const tests: Array<[QualityTestSceneId, string]> = [
+      ['A', 'A:단타'],
+      ['B', 'B:돌진6'],
+      ['C', 'C:테이블'],
+      ['D', 'D:유리창'],
+      ['E', 'E:겁쟁이'],
+      ['F', 'F:4인난전'],
+      ['G', 'G:보스전'],
+      ['H', 'H:5회재시작'],
+    ];
+    for (const [id, label] of tests) {
+      testRow.appendChild(
+        this.makeButton(label, '#1e293b', () => this.actions.onRunQualityTest?.(id)),
+      );
+    }
+    panel.appendChild(testRow);
 
     // ===== STEP 6: STAGE 1, BOSS & TREASURE TOOLS =====
     this.addSectionTitle(panel, 'STAGE 1 DIRECTOR, BOSS & TREASURE (STEP 6)');

@@ -575,6 +575,92 @@ test('Mayhem scoring deduplicates chain collision IDs and SeededRng varies runs 
   assert.notDeepEqual(seqA, seqB);
 });
 
+// ==================== STEP 7 — ARCADE POLISH, A/B PRESETS & PERFORMANCE TESTS ====================
+import { createDefaultMayhemTuning } from '../src/config/mayhemConfig.ts';
+import {
+  applyCombatFeelPreset,
+  applyImportedTuningJson,
+  createDefaultPolishSettings,
+  IMPACT_REACTION_PROFILES,
+  serializeTuningJson,
+} from '../src/config/polishConfig.ts';
+import { createDefaultStep4Tuning } from '../src/config/step4Config.ts';
+import { PerformanceMonitor } from '../src/systems/PerformanceMonitor.ts';
+
+test('HitStopSystem enforces priority and maxHitStopCapMs so simultaneous hits never freeze', () => {
+  const combat = createDefaultCombatTuning();
+  const polish = createDefaultPolishSettings();
+  polish.maxHitStopCapMs = 80;
+  const hs = new HitStopSystem(combat, polish);
+
+  hs.trigger(30, 'LIGHT');
+  assert.equal(hs.remaining, 30);
+  hs.trigger(150, 'ENV_MAJOR'); // Exceeds cap -> clamped cleanly to 80ms!
+  assert.equal(hs.remaining, 80);
+  // Lower priority light hit must not overwrite active ENV_MAJOR
+  hs.trigger(25, 'LIGHT');
+  assert.equal(hs.remaining, 80);
+});
+
+test('A/B Combat Feel Presets switch cleanly and JSON Export/Import round-trips safely', () => {
+  const combat = createDefaultCombatTuning();
+  const mayhem = createDefaultMayhemTuning();
+  const step4 = createDefaultStep4Tuning();
+  const polish = createDefaultPolishSettings();
+
+  applyCombatFeelPreset('ARCADE_CLASSIC', combat, mayhem, step4, polish);
+  assert.equal(polish.activePreset, 'ARCADE_CLASSIC');
+  assert.ok(combat.hitStopScale < 1.0 && polish.maxShakeCap <= 8);
+
+  applyCombatFeelPreset('MAXIMUM_MAYHEM', combat, mayhem, step4, polish);
+  assert.equal(polish.activePreset, 'MAXIMUM_MAYHEM');
+  assert.ok(combat.hitStopScale > 1.0 && combat.knockbackMultiplier > 1.0);
+
+  const json = serializeTuningJson(combat, mayhem, step4, polish);
+  const combat2 = createDefaultCombatTuning();
+  const mayhem2 = createDefaultMayhemTuning();
+  const step4_2 = createDefaultStep4Tuning();
+  const polish2 = createDefaultPolishSettings();
+  assert.equal(applyImportedTuningJson(json, combat2, mayhem2, step4_2, polish2), true);
+  assert.equal(polish2.maxHitStopCapMs, polish.maxHitStopCapMs);
+  assert.equal(combat2.knockbackMultiplier, combat.knockbackMultiplier);
+
+  // Corrupted JSON is rejected cleanly without throwing
+  assert.equal(applyImportedTuningJson('{broken', combat2, mayhem2, step4_2, polish2), false);
+});
+
+test('PerformanceMonitor accurately computes P50, P95, max spike, and long-frame counts', () => {
+  const pm = new PerformanceMonitor(60);
+  for (let i = 0; i < 58; i++) pm.recordFrame(16.6);
+  pm.recordFrame(28.0);
+  pm.recordFrame(42.0);
+
+  const snap = pm.getSnapshot({
+    activeEnemies: 15,
+    activeProjectiles: 8,
+    activeParticles: 24,
+    activeAudioVoices: 10,
+  });
+  assert.ok(snap.medianFrameMs >= 16.5 && snap.medianFrameMs <= 16.7);
+  assert.ok(snap.p95FrameMs >= 16.6);
+  assert.equal(snap.maxSpikeMs, 42.0);
+  assert.equal(snap.longFrameCount, 2);
+  assert.equal(snap.activeAudioVoices, 10);
+});
+
+test('Impact Reaction Profiles scale bounce, squash, and tumble monotonically from LIGHT to EXTREME', () => {
+  assert.ok(
+    IMPACT_REACTION_PROFILES.LIGHT.bounceRestitution <
+      IMPACT_REACTION_PROFILES.MEDIUM.bounceRestitution &&
+      IMPACT_REACTION_PROFILES.MEDIUM.bounceRestitution <
+        IMPACT_REACTION_PROFILES.STRONG.bounceRestitution &&
+      IMPACT_REACTION_PROFILES.STRONG.bounceRestitution <
+        IMPACT_REACTION_PROFILES.EXTREME.bounceRestitution,
+  );
+  assert.ok(IMPACT_REACTION_PROFILES.LIGHT.tumbleSpinMul < IMPACT_REACTION_PROFILES.EXTREME.tumbleSpinMul);
+});
+
+
 
 
 

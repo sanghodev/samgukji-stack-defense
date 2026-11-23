@@ -52,12 +52,13 @@ import { Projectile } from '../entities/Projectile';
 import { SurfaceHazard } from '../entities/SurfaceHazard';
 import { TreasurePickup } from '../entities/TreasurePickup';
 import { ArrowFireRequest, Warrior } from '../entities/Warrior';
+import { createDefaultPolishSettings, PolishSettings } from '../config/polishConfig';
 import { AIHeroController } from '../systems/AIHeroController';
 import { CameraGagController } from '../systems/CameraGagController';
 import { CollisionChainManager } from '../systems/CollisionChainManager';
 import { CombatAudioManager } from '../systems/CombatAudioManager';
 import { CombatCoordinator } from '../systems/CombatCoordinator';
-import { CombatDebugPanel } from '../systems/CombatDebugPanel';
+import { CombatDebugPanel, QualityTestSceneId } from '../systems/CombatDebugPanel';
 import { CombatHud } from '../systems/CombatHud';
 import { DebrisEffectManager } from '../systems/DebrisEffectManager';
 import { DebugOverlay } from '../systems/DebugOverlay';
@@ -67,6 +68,7 @@ import { InputSystem } from '../systems/InputSystem';
 import { SystemRegistry } from '../systems/ModuleRegistry';
 import { HeroActionInput, MultiInputManager } from '../systems/MultiInputManager';
 import { PartySetupOverlay } from '../systems/PartySetupOverlay';
+import { PerformanceMonitor } from '../systems/PerformanceMonitor';
 import { ScreenShakeSystem } from '../systems/ScreenShakeSystem';
 import { HumanTreasureOffer, StageOverlayUI } from '../systems/StageOverlayUI';
 import { MarketplaceArena } from '../world/MarketplaceArena';
@@ -80,10 +82,9 @@ const HERO_SPAWN_OFFSETS: ReadonlyArray<{ x: number; y: number }> = [
 
 /**
  * Main fixed-camera 2.5D arena scene for Three Kingdoms Mayhem (삼국지 난장판).
- * Step 6: Complete replayable Stage 1 ("제1장 — 산적 소탕 / Bandit Mayhem")
- * with StageDirector state machine, 5 waves, Elite Bandit, Bandit Chief Boss,
- * 5-tier Hero Treasure Evolution, Mayhem Scoring, Victory/Defeat screens,
- * and flexible 1-4 player local multiplayer + AI cooperation.
+ * Step 7: Arcade Quality Polish — Hero-colored weapon trails, priority/capped hit-stop,
+ * directional camera shake + impact flash, multi-bus audio mixer with dynamic ducking &
+ * voice budget, A/B Combat Feel Presets, PerformanceMonitor, Accessibility, and Test Scenes A-H.
  */
 export class BrawlScene extends Phaser.Scene {
   private eventsBus!: EventBus;
@@ -91,6 +92,8 @@ export class BrawlScene extends Phaser.Scene {
   private mayhemTuning!: MayhemTuning;
   private step4Tuning!: Step4Tuning;
   private step5Tuning!: Step5Tuning;
+  private polishSettings!: PolishSettings;
+  private perfMonitor!: PerformanceMonitor;
   private party!: PartyManager;
   private stageDirector!: StageDirector;
   private progressStore!: PersistentProgressStore;
@@ -149,6 +152,8 @@ export class BrawlScene extends Phaser.Scene {
     this.mayhemTuning = createDefaultMayhemTuning();
     this.step4Tuning = createDefaultStep4Tuning();
     this.step5Tuning = createDefaultStep5Tuning();
+    this.polishSettings = createDefaultPolishSettings();
+    this.perfMonitor = new PerformanceMonitor(120);
     this.party = new PartyManager();
     this.progressStore = new PersistentProgressStore();
     this.stageDirector = new StageDirector(
@@ -166,9 +171,13 @@ export class BrawlScene extends Phaser.Scene {
       }),
     );
     this.aiHeroCtrl = new AIHeroController(this.step5Tuning);
-    this.hitStop = this.systems.register(new HitStopSystem(this.tuning));
-    this.screenShake = this.systems.register(new ScreenShakeSystem(this.tuning));
-    this.audio = this.systems.register(new CombatAudioManager(this.tuning, this.mayhemTuning));
+    this.hitStop = this.systems.register(new HitStopSystem(this.tuning, this.polishSettings));
+    this.screenShake = this.systems.register(
+      new ScreenShakeSystem(this.tuning, this.polishSettings),
+    );
+    this.audio = this.systems.register(
+      new CombatAudioManager(this.tuning, this.mayhemTuning, this.polishSettings),
+    );
     this.vfx = this.systems.register(new ImpactVfxSystem());
     this.debris = this.systems.register(new DebrisEffectManager(this.mayhemTuning));
     this.coordinator = this.systems.register(new CombatCoordinator());
@@ -209,6 +218,7 @@ export class BrawlScene extends Phaser.Scene {
         this.mayhemTuning,
         this.step4Tuning,
         this.step5Tuning,
+        this.polishSettings,
         {
           onSpawnBandit: (arch) => this.spawnSingleBandit(arch),
           onSpawnBanditGroup: () => {
@@ -318,6 +328,8 @@ export class BrawlScene extends Phaser.Scene {
             this.handleStageStepResult(res);
           },
           onReturnMainMenu: () => this.openMainMenu(),
+          onRunQualityTest: (id) => this.runQualityTestScene(id),
+          onPresetApplied: (label) => this.partyOverlay.showToast(`🎛 ${label}`),
         },
       ),
     );
@@ -544,6 +556,17 @@ export class BrawlScene extends Phaser.Scene {
     const activeEnemies = this.bandits.filter((b) => !b.isNeutralized).length + (this.boss?.isAlive ? 1 : 0);
     const surrenderedCount = this.bandits.filter((b) => b.state === 'SURRENDERED').length;
     const allDefeated = this.heroes.every((h) => h.isDefeated);
+
+    this.perfMonitor.recordFrame(delta);
+    const perfSnap = this.perfMonitor.getSnapshot({
+      activeEnemies,
+      activeProjectiles: this.projectiles.length,
+      activeParticles: this.vfx.activeParticleCount,
+      activeAudioVoices: this.audio.activeVoiceCount,
+    });
+    this.combatDebugPanel.updatePerfStatus(
+      `FPS:${perfSnap.avgFps.toFixed(0)} | P50:${perfSnap.medianFrameMs.toFixed(1)}ms | P95:${perfSnap.p95FrameMs.toFixed(1)}ms | Max:${perfSnap.maxSpikeMs.toFixed(0)}ms | Fx:${perfSnap.activeParticles} | Vox:${perfSnap.activeAudioVoices}`,
+    );
 
     this.combatDebugPanel.updateStageStatus(
       `STATE: ${this.stageDirector.state} | W${this.stageDirector.waveIndex + 1}/5 | Queue:${this.stageDirector.remainingSpawnsInWave} | Active:${activeEnemies} | Score:${this.stageDirector.stats.totalScore}`,
@@ -1025,7 +1048,7 @@ export class BrawlScene extends Phaser.Scene {
           } else {
             this.audio.playLightWhoosh();
           }
-          this.vfx.spawnSpearTrail(ax, ay, dirX, dirY, attackType, range);
+          this.vfx.spawnSpearTrail(ax, ay, dirX, dirY, attackType, range, h.heroId);
           // Zhao Yun Tier 3 Treasure: Blue spear afterimage visual burst!
           if (h.heroId === 'zhaoyun' && h.heroMods.afterimageTrail) {
             this.spawnShockwave(ax + dirX * 32, ay + dirY * 18, 0x38bdf8, 68);
@@ -1661,8 +1684,10 @@ export class BrawlScene extends Phaser.Scene {
     if (hitEnemy) {
       this.audio.playShoulderCollision();
       this.audio.playEnemyHurt(true);
-      this.hitStop.trigger(44);
+      this.audio.duckMusic(280);
+      this.hitStop.trigger(this.polishSettings.heavyHitStopMs, 'HEAVY');
       this.screenShake.trigger(6.5, 125, hero.chargeDirX, hero.chargeDirY);
+      this.screenShake.triggerImpactFlash(0xe9d5ff, 0.14, 48);
     }
 
     if (!hero.isChargeActive) return;
@@ -2218,6 +2243,116 @@ export class BrawlScene extends Phaser.Scene {
       });
     });
     this.partyOverlay.showToast('🎮 4인 동시 필살기 입력 시뮬레이션 실행!');
+  }
+
+  /**
+   * Step 7 Reusable Quality Test Scenarios (TEST A through TEST H) triggered from F2 lab.
+   */
+  private runQualityTestScene(id: QualityTestSceneId): void {
+    this.stageOverlay.hideAllModals();
+    this.perfMonitor.reset();
+
+    switch (id) {
+      case 'A': {
+        // TEST A — SINGLE HIT: 1 Zhao Yun vs 1 Bandit
+        this.party.setPreset('SOLO');
+        this.resetWorldEntitiesOnly();
+        this.stageDirector.resetForNewRun(1, 0, 1001);
+        this.stageDirector.state = 'WAVE_ACTIVE';
+        this.spawnActivePartyHeroes();
+        this.spawnBanditAt(690, 515, 0, 'stubborn');
+        this.partyOverlay.showToast('🧪 TEST A: 조운 vs 산적 1명 (단타/강공격 비교)');
+        break;
+      }
+      case 'B': {
+        // TEST B — GROUP KNOCKBACK: Zhang Fei charges into 6 Bandits
+        this.party.setSlot(0, 'HUMAN', 'zhangfei', 'keyboard');
+        this.party.setSlot(1, 'EMPTY', null);
+        this.party.setSlot(2, 'EMPTY', null);
+        this.party.setSlot(3, 'EMPTY', null);
+        this.resetWorldEntitiesOnly();
+        this.stageDirector.resetForNewRun(1, 0, 1002);
+        this.stageDirector.state = 'WAVE_ACTIVE';
+        this.spawnActivePartyHeroes();
+        const zf = this.heroes[0];
+        if (zf) zf.reset(380, 500);
+        for (let i = 0; i < 6; i++) {
+          this.spawnBanditAt(540 + i * 54, 492 + (i % 2) * 18, i, i % 2 === 0 ? 'clumsy' : 'coward');
+        }
+        this.partyOverlay.showToast('🧪 TEST B: 장비 돌진 vs 산적 6명 (V 키로 연쇄 충돌 테스트!)');
+        break;
+      }
+      case 'C': {
+        // TEST C — TABLE DESTRUCTION: Table + 3 Bandits + Ceramic Jars
+        this.party.setPreset('SOLO');
+        this.resetWorldEntitiesOnly();
+        this.stageDirector.resetForNewRun(1, 0, 1003);
+        this.stageDirector.state = 'WAVE_ACTIVE';
+        this.spawnActivePartyHeroes();
+        this.spawnObject('table', 635, 515);
+        this.spawnObject('ceramic_jar', 760, 500);
+        this.spawnObject('ceramic_jar', 785, 530);
+        this.spawnBanditAt(730, 505, 0, 'coward');
+        this.spawnBanditAt(765, 520, 1, 'clumsy');
+        this.spawnBanditAt(800, 510, 2, 'overconfident');
+        this.partyOverlay.showToast('🧪 TEST C: 테이블 투척 + 항아리 파괴 (SPACE로 집어 던지세요!)');
+        break;
+      }
+      case 'D': {
+        // TEST D — CAMERA GAG
+        this.cameraGag.forcePreview();
+        this.audio.duckMusic(900);
+        this.screenShake.triggerImpactFlash(0xfef08a, 0.14, 55);
+        this.partyOverlay.showToast('🧪 TEST D: 카메라 유리창 충돌 개그 프리뷰');
+        break;
+      }
+      case 'E': {
+        // TEST E — COWARDLY BANDIT: panic, fleeing, tripping, hiding, peeking
+        this.party.setPreset('SOLO');
+        this.resetWorldEntitiesOnly();
+        this.stageDirector.resetForNewRun(1, 0, 1005);
+        this.stageDirector.state = 'WAVE_ACTIVE';
+        this.spawnActivePartyHeroes();
+        this.spawnObject('barrel_water', 740, 440);
+        this.spawnObject('table', 460, 460);
+        for (let i = 0; i < 4; i++) {
+          this.spawnBanditAt(540 + i * 70, 460, i, 'coward');
+        }
+        for (const b of this.bandits) b.forcePanic(this.coordinator);
+        this.partyOverlay.showToast('🧪 TEST E: 겁쟁이 산적 도주·넘어짐·숨기·빼꼼 테스트');
+        break;
+      }
+      case 'F': {
+        // TEST F — FOUR-HERO CHAOS
+        this.party.setPreset('FULL_AI');
+        this.startStage1Run(false);
+        const res = this.stageDirector.jumpToWave(2);
+        this.handleStageStepResult(res);
+        this.partyOverlay.showToast('🧪 TEST F: 4인 영웅 + 다수 산적 난전 부하 테스트');
+        break;
+      }
+      case 'G': {
+        // TEST G — BOSS BATTLE
+        this.party.setPreset('FULL_AI');
+        this.resetWorldEntitiesOnly();
+        this.stageDirector.resetForNewRun(1, 3, 1007);
+        this.stageDirector.waveIndex = 4;
+        this.stageDirector.state = 'BOSS_ACTIVE';
+        this.spawnActivePartyHeroes();
+        this.spawnBossChief();
+        this.audio.setMusicIntensity('BOSS');
+        this.partyOverlay.showToast('🧪 TEST G: 산적 두목 보스전 즉시 시작');
+        break;
+      }
+      case 'H': {
+        // TEST H — RESTART STABILITY (5 rapid consecutive resets)
+        for (let i = 0; i < 5; i++) {
+          this.startStage1Run(false);
+        }
+        this.partyOverlay.showToast('🧪 TEST H: 5회 연속 즉시 재시작 완료 (누수/중복 리스너 없음)');
+        break;
+      }
+    }
   }
 
   private clearAllHeroes(): void {

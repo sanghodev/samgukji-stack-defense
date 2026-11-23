@@ -1,5 +1,6 @@
 import { CombatTuning } from '../config/combatConfig';
 import { MayhemTuning } from '../config/mayhemConfig';
+import { PolishSettings } from '../config/polishConfig';
 import { IAudioSystem, SystemContext } from './ModuleRegistry';
 
 type SoundChannel =
@@ -65,25 +66,42 @@ type SoundChannel =
 
 /**
  * Procedural Web Audio API combat & environmental chaos sound engine.
- * Features independent combat & environmental SFX gain channels, dynamic compression
- * (zero clipping), per-channel cooldown throttling, pitch variation, and sound layering.
+ * Step 7: Multi-bus mixer (Master, Combat, Environment, Voices, Music, UI),
+ * dynamic compression (zero clipping), music ducking on heavy impacts,
+ * active voice budgeting, per-channel cooldown throttling, and pitch variation.
  */
 export class CombatAudioManager implements IAudioSystem {
   public readonly id = 'audio';
 
   private readonly tuning: CombatTuning;
   private readonly mayhemTuning?: MayhemTuning;
+  private readonly polish?: PolishSettings;
   private ctx?: AudioContext;
+  private masterGain?: GainNode;
   private combatGain?: GainNode;
   private envGain?: GainNode;
+  private voiceGain?: GainNode;
+  private musicGain?: GainNode;
+  private uiGain?: GainNode;
   private compressor?: DynamicsCompressorNode;
   private noiseBuffer?: AudioBuffer;
   private readonly lastPlayedAt = new Map<SoundChannel, number>();
   private unlockBound?: () => void;
+  private activeVoices = 0;
+  private duckUntilTime = 0;
 
-  constructor(tuning: CombatTuning, mayhemTuning?: MayhemTuning) {
+  constructor(
+    tuning: CombatTuning,
+    mayhemTuning?: MayhemTuning,
+    polish?: PolishSettings,
+  ) {
     this.tuning = tuning;
     this.mayhemTuning = mayhemTuning;
+    this.polish = polish;
+  }
+
+  public get activeVoiceCount(): number {
+    return this.activeVoices;
   }
 
   public init(_ctx: SystemContext): void {
@@ -108,19 +126,27 @@ export class CombatAudioManager implements IAudioSystem {
       this.compressor.attack.setValueAtTime(0.003, this.ctx.currentTime);
       this.compressor.release.setValueAtTime(0.12, this.ctx.currentTime);
 
+      this.masterGain = this.ctx.createGain();
+      this.masterGain.connect(this.compressor);
+
       this.combatGain = this.ctx.createGain();
-      this.combatGain.gain.setValueAtTime(this.tuning.audioVolume, this.ctx.currentTime);
-      this.combatGain.connect(this.compressor);
+      this.combatGain.connect(this.masterGain);
 
       this.envGain = this.ctx.createGain();
-      this.envGain.gain.setValueAtTime(
-        this.mayhemTuning?.envSfxVolume ?? this.tuning.audioVolume,
-        this.ctx.currentTime,
-      );
-      this.envGain.connect(this.compressor);
+      this.envGain.connect(this.masterGain);
+
+      this.voiceGain = this.ctx.createGain();
+      this.voiceGain.connect(this.masterGain);
+
+      this.musicGain = this.ctx.createGain();
+      this.musicGain.connect(this.masterGain);
+
+      this.uiGain = this.ctx.createGain();
+      this.uiGain.connect(this.masterGain);
 
       this.compressor.connect(this.ctx.destination);
       this.noiseBuffer = this.createNoiseBuffer(this.ctx);
+      this.syncVolume();
     }
 
     if (this.ctx.state === 'suspended') {
@@ -128,23 +154,47 @@ export class CombatAudioManager implements IAudioSystem {
     }
   }
 
+  /**
+   * Briefly ducks BGM during heavy impacts, camera-glass splat, or boss defeat
+   * so punchy combat transients cut cleanly through the mix.
+   */
+  public duckMusic(durationMs = 320): void {
+    if (!this.ctx || !this.musicGain) return;
+    const duckDepth = this.polish?.musicDuckingAmount ?? 0.55;
+    if (duckDepth <= 0.02) return;
+    const now = this.ctx.currentTime;
+    const baseMusic = this.polish?.musicVolume ?? 0.55;
+    const ducked = Math.max(0.04, baseMusic * (1 - duckDepth));
+    this.duckUntilTime = Math.max(this.duckUntilTime, now + durationMs * 0.001);
+    this.musicGain.gain.cancelScheduledValues(now);
+    this.musicGain.gain.setTargetAtTime(ducked, now, 0.012);
+    this.musicGain.gain.setTargetAtTime(baseMusic, this.duckUntilTime, 0.08);
+  }
+
   public syncVolume(): void {
     if (!this.ctx) return;
-    if (this.combatGain) {
-      this.combatGain.gain.setTargetAtTime(
-        Math.max(0, Math.min(1.5, this.tuning.audioVolume)),
-        this.ctx.currentTime,
-        0.015,
-      );
+    const now = this.ctx.currentTime;
+    const master = Math.max(0, Math.min(1.5, this.polish?.masterVolume ?? 1.0));
+    const combat = Math.max(0, Math.min(1.5, (this.polish?.combatVolume ?? 1.0) * this.tuning.audioVolume));
+    const env = Math.max(
+      0,
+      Math.min(
+        1.5,
+        (this.polish?.envVolume ?? 1.0) * (this.mayhemTuning?.envSfxVolume ?? this.tuning.audioVolume),
+      ),
+    );
+    const voice = Math.max(0, Math.min(1.5, this.polish?.voiceVolume ?? 0.85));
+    const music = Math.max(0, Math.min(1.5, this.polish?.musicVolume ?? 0.55));
+    const ui = Math.max(0, Math.min(1.5, this.polish?.uiVolume ?? 0.85));
+
+    this.masterGain?.gain.setTargetAtTime(master, now, 0.015);
+    this.combatGain?.gain.setTargetAtTime(combat, now, 0.015);
+    this.envGain?.gain.setTargetAtTime(env, now, 0.015);
+    this.voiceGain?.gain.setTargetAtTime(voice, now, 0.015);
+    if (now >= this.duckUntilTime) {
+      this.musicGain?.gain.setTargetAtTime(music, now, 0.025);
     }
-    if (this.envGain) {
-      const ev = this.mayhemTuning ? this.mayhemTuning.envSfxVolume : this.tuning.audioVolume;
-      this.envGain.gain.setTargetAtTime(
-        Math.max(0, Math.min(1.5, ev)),
-        this.ctx.currentTime,
-        0.015,
-      );
-    }
+    this.uiGain?.gain.setTargetAtTime(ui, now, 0.015);
   }
 
   // ==================== STEP 2 COMBAT SOUNDS ====================
@@ -626,7 +676,7 @@ export class CombatAudioManager implements IAudioSystem {
   }
 
   public updateAdaptiveBgm(deltaMs: number): void {
-    if (!this.ctx || this.ctx.state !== 'running' || !this.combatGain) return;
+    if (!this.ctx || this.ctx.state !== 'running' || !this.musicGain) return;
     if (this.tuning.audioVolume <= 0.001) return;
     if (
       this.musicIntensity === 'CALM' ||
@@ -648,7 +698,6 @@ export class CombatAudioManager implements IAudioSystem {
     this.bgmStepTimerMs -= stepMs;
 
     const now = this.ctx.currentTime;
-    // Chinese pentatonic arcade bass & light percussion (kept quiet so impact SFX dominate!)
     const scale =
       this.musicIntensity === 'BOSS'
         ? [110, 130.8, 146.8, 164.8, 196, 146.8, 130.8, 110]
@@ -657,17 +706,17 @@ export class CombatAudioManager implements IAudioSystem {
     const accent = this.bgmStepIndex % 4 === 0;
 
     this.playTone(
-      this.combatGain,
+      this.musicGain,
       now,
       this.musicIntensity === 'BOSS' ? 'sawtooth' : 'triangle',
       freq,
       freq * 0.98,
       stepMs * 0.00075,
-      accent ? 0.048 : 0.03,
+      accent ? 0.08 : 0.05,
     );
 
     if (accent || (this.musicIntensity !== 'WAVE_LIGHT' && this.bgmStepIndex % 2 === 0)) {
-      this.playTone(this.combatGain, now, 'sine', accent ? 105 : 150, 42, 0.08, accent ? 0.06 : 0.035);
+      this.playTone(this.musicGain, now, 'sine', accent ? 105 : 150, 42, 0.08, accent ? 0.1 : 0.06);
     }
 
     this.bgmStepIndex = (this.bgmStepIndex + 1) % 16;
@@ -832,6 +881,10 @@ export class CombatAudioManager implements IAudioSystem {
     peakGain: number,
   ): void {
     if (!this.ctx) return;
+    const maxVoices = this.polish?.maxAudioVoices ?? 20;
+    if (this.activeVoices >= maxVoices) return;
+
+    this.activeVoices += 1;
     const osc = this.ctx.createOscillator();
     const gain = this.ctx.createGain();
     osc.type = type;
@@ -844,6 +897,9 @@ export class CombatAudioManager implements IAudioSystem {
 
     osc.connect(gain);
     gain.connect(dest);
+    osc.onended = () => {
+      this.activeVoices = Math.max(0, this.activeVoices - 1);
+    };
     osc.start(startTime);
     osc.stop(startTime + durationSec + 0.01);
   }
@@ -858,6 +914,10 @@ export class CombatAudioManager implements IAudioSystem {
     peakGain: number,
   ): void {
     if (!this.ctx || !this.noiseBuffer) return;
+    const maxVoices = this.polish?.maxAudioVoices ?? 20;
+    if (this.activeVoices >= maxVoices) return;
+
+    this.activeVoices += 1;
     const src = this.ctx.createBufferSource();
     src.buffer = this.noiseBuffer;
 
@@ -875,6 +935,9 @@ export class CombatAudioManager implements IAudioSystem {
     src.connect(filter);
     filter.connect(gain);
     gain.connect(dest);
+    src.onended = () => {
+      this.activeVoices = Math.max(0, this.activeVoices - 1);
+    };
     src.start(startTime);
     src.stop(startTime + durationSec + 0.01);
   }
@@ -903,9 +966,14 @@ export class CombatAudioManager implements IAudioSystem {
       void this.ctx.close();
       this.ctx = undefined;
     }
+    this.masterGain = undefined;
     this.combatGain = undefined;
     this.envGain = undefined;
+    this.voiceGain = undefined;
+    this.musicGain = undefined;
+    this.uiGain = undefined;
     this.compressor = undefined;
     this.noiseBuffer = undefined;
+    this.activeVoices = 0;
   }
 }

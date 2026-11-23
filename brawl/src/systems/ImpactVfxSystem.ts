@@ -1,7 +1,18 @@
 import Phaser from 'phaser';
 import { AttackType } from '../config/combatConfig';
+import type { HeroId } from '../config/heroConfig';
 import { getDepthOrder, getPerspectiveScale } from '../core/Perspective';
 import { IGameSystem, SystemContext } from './ModuleRegistry';
+
+const HERO_TRAIL_PALETTES: Record<
+  HeroId,
+  { outer: number; mid: number; core: number; sweepMul: number }
+> = {
+  zhaoyun: { outer: 0x0284c7, mid: 0x38bdf8, core: 0xf0f9ff, sweepMul: 1.0 },
+  guanyu: { outer: 0x15803d, mid: 0x4ade80, core: 0xfef08a, sweepMul: 1.32 },
+  zhangfei: { outer: 0x7e22ce, mid: 0xc084fc, core: 0xfde047, sweepMul: 1.15 },
+  huangzhong: { outer: 0xb45309, mid: 0xfacc15, core: 0xffffff, sweepMul: 0.9 },
+};
 
 interface PooledSprite {
   sprite: Phaser.GameObjects.Image;
@@ -20,7 +31,7 @@ interface PooledSprite {
 
 /**
  * Reusable, object-pooled pixel-art combat VFX system.
- * Produces directional spear trails, crisp impact flashes, sparks,
+ * Produces hero-colored directional weapon trails, crisp impact flashes, sparks,
  * heavy motion streaks, and knockdown landing dust without GC spikes.
  */
 export class ImpactVfxSystem implements IGameSystem {
@@ -29,6 +40,13 @@ export class ImpactVfxSystem implements IGameSystem {
   private scene?: Phaser.Scene;
   private readonly sparkPool: PooledSprite[] = [];
   private readonly dustPool: PooledSprite[] = [];
+
+  public get activeParticleCount(): number {
+    let n = 0;
+    for (let i = 0; i < this.sparkPool.length; i++) if (this.sparkPool[i].active) n++;
+    for (let i = 0; i < this.dustPool.length; i++) if (this.dustPool[i].active) n++;
+    return n;
+  }
 
   public init(ctx: SystemContext): void {
     this.scene = ctx.scene;
@@ -43,7 +61,7 @@ export class ImpactVfxSystem implements IGameSystem {
   }
 
   /**
-   * Directional spear trail & motion streaks fired when an attack enters ACTIVE frames.
+   * Hero-styled directional weapon trail & motion streaks fired on exact ACTIVE frames.
    */
   public spawnSpearTrail(
     x: number,
@@ -52,8 +70,10 @@ export class ImpactVfxSystem implements IGameSystem {
     dirY: number,
     attackType: AttackType,
     range: number,
+    heroId: HeroId = 'zhaoyun',
   ): void {
     if (!this.scene) return;
+    const pal = HERO_TRAIL_PALETTES[heroId] ?? HERO_TRAIL_PALETTES.zhaoyun;
     const scale = getPerspectiveScale(y);
     const angle = Math.atan2(dirY, dirX);
     const g = this.scene.add.graphics();
@@ -63,58 +83,71 @@ export class ImpactVfxSystem implements IGameSystem {
     const visualRange = range * scale;
 
     if (attackType === 'HEAVY') {
-      // Bold blue spear thrust lance + bright core + stylized speed motion streaks
       const ex = Math.cos(angle) * visualRange * 1.05;
       const ey = Math.sin(angle) * visualRange * 0.72;
       const sx = Math.cos(angle) * 14 * scale;
       const sy = Math.sin(angle) * 10 * scale;
 
-      g.lineStyle(18 * scale, 0x0284c7, 0.52);
-      g.lineBetween(sx, sy, ex, ey);
-      g.lineStyle(9 * scale, 0x38bdf8, 0.88);
-      g.lineBetween(sx, sy, ex, ey);
-      g.lineStyle(4 * scale, 0xf0f9ff, 1);
-      g.lineBetween(sx, sy, ex, ey);
+      if (heroId === 'guanyu') {
+        // Wide emerald-gold guandao heavy crescent!
+        const rad = visualRange * 0.92;
+        g.lineStyle(18 * scale, pal.outer, 0.55);
+        g.beginPath();
+        g.arc(0, 0, rad, angle - 1.15, angle + 1.15, false);
+        g.strokePath();
+        g.lineStyle(8 * scale, pal.mid, 0.92);
+        g.beginPath();
+        g.arc(0, 0, rad, angle - 1.08, angle + 1.08, false);
+        g.strokePath();
+        g.lineStyle(3.5 * scale, pal.core, 1);
+        g.beginPath();
+        g.arc(0, 0, rad, angle - 0.95, angle + 0.95, false);
+        g.strokePath();
+      } else {
+        g.lineStyle(18 * scale, pal.outer, 0.52);
+        g.lineBetween(sx, sy, ex, ey);
+        g.lineStyle(9 * scale, pal.mid, 0.88);
+        g.lineBetween(sx, sy, ex, ey);
+        g.lineStyle(4 * scale, pal.core, 1);
+        g.lineBetween(sx, sy, ex, ey);
 
-      // Stylized parallel speed streaks
-      const perpX = -Math.sin(angle);
-      const perpY = Math.cos(angle) * 0.72;
-      for (const side of [-1, 1]) {
-        const ox = perpX * 18 * scale * side;
-        const oy = perpY * 18 * scale * side;
-        g.lineStyle(2.5 * scale, 0xbae6fd, 0.75);
-        g.lineBetween(sx + ox, sy + oy, ex * 0.85 + ox, ey * 0.85 + oy);
+        const perpX = -Math.sin(angle);
+        const perpY = Math.cos(angle) * 0.72;
+        for (const side of [-1, 1]) {
+          const ox = perpX * 18 * scale * side;
+          const oy = perpY * 18 * scale * side;
+          g.lineStyle(2.5 * scale, pal.core, 0.75);
+          g.lineBetween(sx + ox, sy + oy, ex * 0.85 + ox, ey * 0.85 + oy);
+        }
       }
 
-      // Dust kickback at feet from heavy lunge
       this.spawnDustBurst(x, y + 2, -dirX, -dirY, 5, scale);
     } else if (attackType === 'LIGHT_3') {
-      // Larger cyan-blue finishing crescent arc + thrust beam
       const radius = visualRange * 0.82;
-      g.lineStyle(13 * scale, 0x0ea5e9, 0.55);
-      g.beginPath();
-      g.arc(0, 0, radius, angle - 0.85, angle + 0.85, false);
-      g.strokePath();
-
-      g.lineStyle(6 * scale, 0x7dd3fc, 0.95);
-      g.beginPath();
-      g.arc(0, 0, radius, angle - 0.78, angle + 0.78, false);
-      g.strokePath();
-
-      const ex = Math.cos(angle) * visualRange;
-      const ey = Math.sin(angle) * visualRange * 0.72;
-      g.lineStyle(5 * scale, 0xe0f2fe, 0.9);
-      g.lineBetween(0, 0, ex, ey);
-    } else {
-      // Crisp short blue spear slash arc (LIGHT_1 / LIGHT_2)
-      const radius = visualRange * (attackType === 'LIGHT_2' ? 0.74 : 0.66);
-      const sweep = attackType === 'LIGHT_2' ? 0.68 : 0.56;
-      g.lineStyle(9 * scale, 0x0ea5e9, 0.5);
+      const sweep = 0.85 * pal.sweepMul;
+      g.lineStyle(13 * scale, pal.outer, 0.55);
       g.beginPath();
       g.arc(0, 0, radius, angle - sweep, angle + sweep, false);
       g.strokePath();
 
-      g.lineStyle(4 * scale, 0xbae6fd, 0.92);
+      g.lineStyle(6 * scale, pal.mid, 0.95);
+      g.beginPath();
+      g.arc(0, 0, radius, angle - sweep * 0.92, angle + sweep * 0.92, false);
+      g.strokePath();
+
+      const ex = Math.cos(angle) * visualRange;
+      const ey = Math.sin(angle) * visualRange * 0.72;
+      g.lineStyle(5 * scale, pal.core, 0.9);
+      g.lineBetween(0, 0, ex, ey);
+    } else {
+      const radius = visualRange * (attackType === 'LIGHT_2' ? 0.74 : 0.66);
+      const sweep = (attackType === 'LIGHT_2' ? 0.68 : 0.56) * pal.sweepMul;
+      g.lineStyle(9 * scale, pal.outer, 0.5);
+      g.beginPath();
+      g.arc(0, 0, radius, angle - sweep, angle + sweep, false);
+      g.strokePath();
+
+      g.lineStyle(4 * scale, pal.mid, 0.92);
       g.beginPath();
       g.arc(0, 0, radius, angle - sweep * 0.88, angle + sweep * 0.88, false);
       g.strokePath();
