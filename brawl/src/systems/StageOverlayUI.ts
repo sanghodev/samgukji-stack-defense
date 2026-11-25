@@ -14,6 +14,12 @@ export interface StageOverlayCallbacks {
   onRetryStage: () => void;
   onOpenHeroChange: () => void;
   onReturnToMainMenu: () => void;
+  isAudioMuted?: () => boolean;
+  onToggleMute?: () => boolean;
+  isTouchEnabled?: () => boolean;
+  onToggleTouchControls?: () => boolean;
+  getCombatPresetLabel?: () => string;
+  onToggleCombatPreset?: () => string;
 }
 
 export interface HumanTreasureOffer {
@@ -49,10 +55,20 @@ function formatTimeMs(ms: number): string {
   return `${m}:${s.toString().padStart(2, '0')}`;
 }
 
+function renderHeroPortraitHtml(heroId: HeroId, size = 64): string {
+  const sheetFile =
+    heroId === 'zhaoyun' ? 'zhaoyun_8dir.png' : `${heroId}_sheet.png`;
+  const frameIdx = heroId === 'zhaoyun' ? 2 : 0;
+  const totalCols = 8;
+  const bgW = size * totalCols;
+  const bgX = -frameIdx * size;
+  return `<div style="width:${size}px;height:${size}px;margin:0 auto;background-image:url('../assets/sprites/${sheetFile}');background-size:${bgW}px ${size}px;background-position:${bgX}px 0px;background-repeat:no-repeat;image-rendering:pixelated;filter:drop-shadow(0 3px 6px rgba(0,0,0,0.65));"></div>`;
+}
+
 /**
- * Clean HTML arcade overlay system for Step 6:
- * Main Menu / Preparation, Skippable Story Intro, Wave/Boss HUD Bar,
- * Multi-Human Treasure Selection, Victory Screen, and Defeat Screen.
+ * Clean HTML arcade overlay system:
+ * Character-Portrait Main Menu, Skippable Story Intro, Wave/Boss HUD Bar,
+ * Pause Menu (ESC), Victory Screen, and Defeat Screen.
  */
 export class StageOverlayUI implements IGameSystem {
   public readonly id = 'stage-overlay-ui';
@@ -62,6 +78,7 @@ export class StageOverlayUI implements IGameSystem {
 
   private rootEl?: HTMLDivElement;
   private menuModalEl?: HTMLDivElement;
+  private pauseModalEl?: HTMLDivElement;
   private introBoxEl?: HTMLDivElement;
   private waveBannerEl?: HTMLDivElement;
   private bossBarEl?: HTMLDivElement;
@@ -79,6 +96,7 @@ export class StageOverlayUI implements IGameSystem {
   private waveBannerTimer?: number;
   private scoreToastTimer?: number;
   private keyListener?: (e: KeyboardEvent) => void;
+  private lastSaveSnapshot?: Readonly<PersistentSaveData>;
 
   public isBlockingCombat = false;
 
@@ -232,23 +250,67 @@ export class StageOverlayUI implements IGameSystem {
     root.appendChild(resultModal);
     this.resultModalEl = resultModal;
 
+    // 8. Pause & Settings Modal (ESC)
+    const pauseModal = document.createElement('div');
+    pauseModal.style.cssText = [
+      'position:fixed',
+      'inset:0',
+      'background:rgba(8,12,20,0.80)',
+      'backdrop-filter:blur(3px)',
+      'display:none',
+      'align-items:center',
+      'justify-content:center',
+      'pointer-events:auto',
+    ].join(';');
+    root.appendChild(pauseModal);
+    this.pauseModalEl = pauseModal;
+
     document.body.appendChild(root);
     this.rootEl = root;
 
     this.keyListener = (e: KeyboardEvent) => {
+      // Story Intro skip
       if (this.introBoxEl && this.introBoxEl.style.display !== 'none') {
         if (e.code === 'Space' || e.code === 'Enter' || e.code === 'Escape') {
           e.preventDefault();
           this.skipIntro();
+          return;
         }
+      }
+      // Main Menu instant launch on Enter (unless user is interacting with a <select>)
+      if (
+        this.menuModalEl &&
+        this.menuModalEl.style.display !== 'none' &&
+        e.code === 'Enter' &&
+        (document.activeElement?.tagName ?? '') !== 'SELECT'
+      ) {
+        e.preventDefault();
+        this.hideAllModals();
+        this.callbacks.onStartStage();
+        return;
+      }
+      // Result screen instant retry on Enter or KeyR
+      if (
+        this.resultModalEl &&
+        this.resultModalEl.style.display !== 'none' &&
+        (e.code === 'Enter' || e.code === 'KeyR')
+      ) {
+        e.preventDefault();
+        this.hideAllModals();
+        this.callbacks.onRetryStage();
       }
     };
     window.addEventListener('keydown', this.keyListener);
   }
 
+  public get isPauseOpen(): boolean {
+    return Boolean(this.pauseModalEl && this.pauseModalEl.style.display !== 'none');
+  }
+
   // ==================== MAIN MENU / PREPARATION ====================
 
   public showMainMenu(saveData: Readonly<PersistentSaveData>): void {
+    this.lastSaveSnapshot = saveData;
     this.hideAllModals();
     if (!this.menuModalEl) return;
     this.isBlockingCombat = true;
@@ -261,11 +323,12 @@ export class StageOverlayUI implements IGameSystem {
     const activeCount = this.party.activeHeroCount;
     const humanCount = this.party.humanPlayerCount;
     const aiCount = activeCount - humanCount;
+    const muted = Boolean(this.callbacks.isAudioMuted?.());
 
     const recordHtml =
       saveData.totalClears > 0
         ? `<div style="font-size:11px;color:#cbd5e1;margin-top:4px;">🏆 최고 기록: <b style="color:#fde047;">${saveData.bestScore.toLocaleString()}점</b> · 최단 클리어: <b style="color:#7dd3fc;">${saveData.fastestClearMs ? formatTimeMs(saveData.fastestClearMs) : '-'}</b> · 클리어 ${saveData.totalClears}회</div>`
-        : `<div style="font-size:11px;color:#94a3b8;margin-top:4px;">장안성 외곽 장터를 습격한 산적 무리와 두목을 소탕하세요!</div>`;
+        : `<div style="font-size:11px;color:#cbd5e1;margin-top:4px;">고정 카메라 2.5D 장안성 장터 — 기물을 집어 던지고 3대 속성 오의로 적 대군을 쓸어버리세요!</div>`;
 
     const permHtml =
       saveData.unlockedPermanentAbilities.length > 0
@@ -282,7 +345,7 @@ export class StageOverlayUI implements IGameSystem {
           );
           const selected = slot.heroId === hid ? 'selected' : '';
           const disabled = usedByOther ? 'disabled' : '';
-          return `<option value="${hid}" ${selected} ${disabled}>${HERO_DATA[hid].displayName} (${HERO_DATA[hid].specialName})</option>`;
+          return `<option value="${hid}" ${selected} ${disabled}>${HERO_DATA[hid].displayName} · ${HERO_DATA[hid].roleLabelKr}</option>`;
         }).join('');
 
         const ctrlBtn = (mode: SlotControlType, label: string) => {
@@ -294,25 +357,49 @@ export class StageOverlayUI implements IGameSystem {
                 ? '#16a34a'
                 : '#475569'
             : '#1e293b';
-          return `<button data-slot-ctrl="${idx}:${mode}" style="flex:1;padding:4px 0;font-size:11px;font-weight:700;border-radius:5px;border:1px solid ${active ? '#facc15' : '#334155'};background:${bg};color:#fff;cursor:pointer;">${label}</button>`;
+          return `<button data-slot-ctrl="${idx}:${mode}" style="flex:1;padding:4px 0;font-size:10.5px;font-weight:800;border-radius:5px;border:1px solid ${active ? '#facc15' : '#334155'};background:${bg};color:#fff;cursor:pointer;">${label}</button>`;
         };
 
-        const accent = slot.heroId ? HERO_DATA[slot.heroId].accentColor : '#475569';
+        const hSpec = slot.heroId && slot.control !== 'EMPTY' ? HERO_DATA[slot.heroId] : null;
+        const accent = hSpec ? hSpec.accentColor : '#475569';
+        const elemBadge = hSpec
+          ? hSpec.skill3Element === 'WATER'
+            ? '💧수룡'
+            : hSpec.skill3Element === 'THUNDER'
+              ? '⚡뇌신'
+              : hSpec.skill3Element === 'SOLAR'
+                ? '☀봉황'
+                : '🔥화염'
+          : '';
+
         return `
-          <div style="background:#111827;border:1.5px solid ${accent};border-radius:8px;padding:8px;">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
-              <span style="font-size:11px;font-weight:800;color:${accent};">슬롯 ${idx + 1}</span>
-              <span style="font-size:10px;color:#94a3b8;">${slot.control === 'HUMAN' ? (slot.deviceId === 'keyboard' ? '키보드' : slot.deviceId) : slot.control === 'AI' ? 'AI 동료' : '비어 있음'}</span>
-            </div>
-            <div style="display:flex;gap:4px;margin-bottom:6px;">
-              ${ctrlBtn('HUMAN', '플레이어')}
-              ${ctrlBtn('AI', 'AI')}
-              ${idx > 0 ? ctrlBtn('EMPTY', '비움') : ''}
+          <div style="background:linear-gradient(180deg,#151c2c,#0d1320);border:1.5px solid ${accent};border-radius:10px;padding:9px;display:flex;flex-direction:column;justify-content:space-between;">
+            <div>
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px;">
+                <span style="font-size:11px;font-weight:900;color:${accent};">SLOT ${idx + 1}</span>
+                <span style="font-size:10px;color:#94a3b8;">${slot.control === 'HUMAN' ? (slot.deviceId === 'keyboard' ? '⌨ 키보드/터치' : `🎮 ${slot.deviceId}`) : slot.control === 'AI' ? '🤖 AI 동료' : '비어 있음'}</span>
+              </div>
+              <div style="display:flex;gap:4px;margin-bottom:7px;">
+                ${ctrlBtn('HUMAN', '플레이어')}
+                ${ctrlBtn('AI', 'AI')}
+                ${idx > 0 ? ctrlBtn('EMPTY', '비움') : ''}
+              </div>
             </div>
             ${
-              slot.control !== 'EMPTY'
-                ? `<select data-slot-hero="${idx}" style="width:100%;padding:4px 6px;border-radius:5px;background:#1e293b;color:#f8fafc;border:1px solid #475569;font-size:12px;">${heroOptions}</select>`
-                : `<div style="font-size:11px;color:#64748b;text-align:center;padding:5px 0;">미참전 (비어 있음)</div>`
+              hSpec && slot.heroId
+                ? `
+                  <div style="background:rgba(9,13,22,0.65);border:1px solid rgba(148,163,184,0.2);border-radius:8px;padding:6px 4px 4px;margin-bottom:6px;text-align:center;">
+                    ${renderHeroPortraitHtml(slot.heroId, 58)}
+                    <div style="margin-top:2px;font-size:10px;font-weight:800;color:${accent};">${hSpec.roleLabelKr} · ${elemBadge} · HP ${hSpec.maxHp}</div>
+                  </div>
+                  <select data-slot-hero="${idx}" style="width:100%;padding:4px 6px;border-radius:5px;background:#1e293b;color:#f8fafc;border:1px solid #475569;font-size:11.5px;font-weight:700;margin-bottom:5px;cursor:pointer;">${heroOptions}</select>
+                  <div style="font-size:9.5px;line-height:1.35;color:#cbd5e1;background:rgba(15,23,42,0.75);border-radius:5px;padding:4px 6px;">
+                    <div><b style="color:#fde047;">[V]</b> ${hSpec.specialName}</div>
+                    <div><b style="color:#7dd3fc;">[B]</b> ${hSpec.skill2Name}</div>
+                    <div><b style="color:#fb923c;">[N]</b> ${hSpec.skill3Name}</div>
+                  </div>
+                `
+                : `<div style="font-size:11px;color:#64748b;text-align:center;padding:38px 0;">미참전 슬롯<br/><span style="font-size:10px;">(적 수·체력 자동 조절)</span></div>`
             }
           </div>
         `;
@@ -320,40 +407,53 @@ export class StageOverlayUI implements IGameSystem {
       .join('');
 
     this.menuModalEl.innerHTML = `
-      <div style="width:740px;max-width:94vw;background:linear-gradient(180deg,#1c120c,#0f172a);border:2.5px solid #facc15;border-radius:14px;padding:20px 24px;color:#f8fafc;box-shadow:0 20px 55px rgba(0,0,0,0.85);">
-        <div style="text-align:center;margin-bottom:14px;">
-          <div style="font-size:12px;letter-spacing:2px;color:#f59e0b;font-weight:800;">THREE KINGDOMS MAYHEM · 삼국지 난장판</div>
+      <div style="width:820px;max-width:95vw;max-height:94vh;overflow-y:auto;background:linear-gradient(180deg,#1f140d 0%,#0f172a 100%);border:2.5px solid #facc15;border-radius:16px;padding:18px 22px;color:#f8fafc;box-shadow:0 24px 64px rgba(0,0,0,0.88);">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+          <a href="../" style="padding:4px 10px;border-radius:6px;border:1px solid #475569;background:#1e293b;color:#cbd5e1;font-size:11px;font-weight:700;text-decoration:none;">← 모드 선택 허브</a>
+          <button data-menu-mute style="padding:4px 11px;border-radius:6px;border:1px solid #475569;background:#1e293b;color:${muted ? '#94a3b8' : '#7dd3fc'};font-size:11px;font-weight:700;cursor:pointer;">${muted ? '🔇 사운드 꺼짐' : '🔊 사운드 켜짐'}</button>
+        </div>
+
+        <div style="text-align:center;margin-bottom:12px;">
+          <div style="font-size:11.5px;letter-spacing:2.5px;color:#f59e0b;font-weight:800;">THREE KINGDOMS MAYHEM · 삼국지 난장판</div>
           <div style="font-size:28px;font-weight:900;color:#fef08a;text-shadow:0 3px 0 #7c2d12;margin-top:2px;">${STAGE_1_INFO.titleKr}</div>
           ${recordHtml}
           ${permHtml}
         </div>
 
-        <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:center;margin-bottom:12px;">
+        <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:center;margin-bottom:10px;">
           <button data-preset="SOLO" style="padding:5px 10px;border-radius:6px;border:1px solid #64748b;background:#1e293b;color:#e2e8f0;font-size:11px;font-weight:700;cursor:pointer;">1인 솔로 (AI 없음)</button>
           <button data-preset="DUO_AI" style="padding:5px 10px;border-radius:6px;border:1px solid #64748b;background:#1e293b;color:#e2e8f0;font-size:11px;font-weight:700;cursor:pointer;">2인 협동 (1P+1AI)</button>
           <button data-preset="FULL_AI" style="padding:5px 10px;border-radius:6px;border:1px solid #facc15;background:#1e293b;color:#fde047;font-size:11px;font-weight:700;cursor:pointer;">4인 풀파티 (1P+3AI)</button>
-          <button data-preset="LOCAL_2P" style="padding:5px 10px;border-radius:6px;border:1px solid #38bdf8;background:#1e293b;color:#7dd3fc;font-size:11px;font-weight:700;cursor:pointer;">로컬 2P (AI 없음)</button>
+          <button data-preset="LOCAL_2P" style="padding:5px 10px;border-radius:6px;border:1px solid #38bdf8;background:#1e293b;color:#7dd3fc;font-size:11px;font-weight:700;cursor:pointer;">로컬 2P (패드)</button>
           <button data-preset="LOCAL_4P" style="padding:5px 10px;border-radius:6px;border:1px solid #c084fc;background:#1e293b;color:#e9d5ff;font-size:11px;font-weight:700;cursor:pointer;">로컬 4P 전원</button>
         </div>
 
-        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:14px;">
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(172px,1fr));gap:8px;margin-bottom:12px;">
           ${slotsHtml}
         </div>
 
-        <div style="display:flex;justify-content:space-between;align-items:center;background:rgba(15,23,42,0.8);border:1px solid #334155;border-radius:8px;padding:8px 14px;margin-bottom:14px;font-size:12px;color:#cbd5e1;">
-          <span>현재 출진 인원: <b style="color:#fde047;">총 ${activeCount}명</b> (플레이어 ${humanCount} · AI 동료 ${aiCount})</span>
-          <span style="font-size:11px;color:#94a3b8;">WASD 이동 · Z/X 공격 · C 방어 · V/B/N 스킬3종(N:위기탈출!) · SPACE 던지기</span>
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;background:rgba(15,23,42,0.84);border:1px solid #334155;border-radius:8px;padding:8px 14px;margin-bottom:12px;font-size:11.5px;color:#cbd5e1;">
+          <span>출진 인원: <b style="color:#fde047;">총 ${activeCount}명</b> (플레이어 ${humanCount} · AI ${aiCount})</span>
+          <span style="font-size:11px;color:#94a3b8;">WASD/방향키 · Z(J) 연타 · X(K) 강타 · C(L) 방어 · V/B/N(1·2·3) 오의 · SPACE 던지기 · 모바일 터치 자동 지원</span>
         </div>
 
         <div style="text-align:center;">
-          <button data-start-stage style="padding:11px 38px;border-radius:10px;border:2px solid #fef08a;background:linear-gradient(180deg,#d97706,#b45309);color:#fff;font-size:17px;font-weight:900;cursor:pointer;box-shadow:0 6px 20px rgba(217,119,6,0.45);">
-            ⚔ 출진! 제1장 시작
+          <button data-start-stage style="padding:11px 42px;border-radius:10px;border:2px solid #fef08a;background:linear-gradient(180deg,#ea580c,#b45309);color:#fff;font-size:17px;font-weight:900;cursor:pointer;box-shadow:0 6px 22px rgba(234,88,12,0.5);">
+            ⚔ 출진! 제1장 시작 (ENTER)
           </button>
         </div>
       </div>
     `;
 
     // Bind events
+    const muteBtn = this.menuModalEl.querySelector<HTMLButtonElement>('[data-menu-mute]');
+    if (muteBtn) {
+      muteBtn.onclick = () => {
+        this.callbacks.onToggleMute?.();
+        this.renderMainMenuContent(saveData);
+      };
+    }
+
     this.menuModalEl.querySelectorAll<HTMLButtonElement>('[data-preset]').forEach((btn) => {
       btn.onclick = () => {
         const p = btn.dataset.preset as 'SOLO' | 'DUO_AI' | 'FULL_AI' | 'LOCAL_2P' | 'LOCAL_4P';
@@ -394,6 +494,110 @@ export class StageOverlayUI implements IGameSystem {
         this.callbacks.onStartStage();
       };
     }
+  }
+
+  // ==================== COMMERCIAL PAUSE & SETTINGS MENU (ESC) ====================
+
+  public openPauseMenu(): void {
+    if (!this.pauseModalEl) return;
+    // Do not open Pause on top of Main Menu or Result screens
+    if (
+      (this.menuModalEl && this.menuModalEl.style.display !== 'none') ||
+      (this.resultModalEl && this.resultModalEl.style.display !== 'none')
+    ) {
+      return;
+    }
+    this.isBlockingCombat = true;
+    this.pauseModalEl.style.display = 'flex';
+    this.renderPauseMenuContent();
+  }
+
+  public closePauseMenu(): void {
+    if (!this.pauseModalEl) return;
+    this.pauseModalEl.style.display = 'none';
+    const anyOtherBlocking =
+      (this.menuModalEl && this.menuModalEl.style.display !== 'none') ||
+      (this.introBoxEl && this.introBoxEl.style.display !== 'none') ||
+      (this.treasureModalEl && this.treasureModalEl.style.display !== 'none') ||
+      (this.resultModalEl && this.resultModalEl.style.display !== 'none');
+    this.isBlockingCombat = Boolean(anyOtherBlocking);
+  }
+
+  public togglePauseMenu(): boolean {
+    if (this.isPauseOpen) {
+      this.closePauseMenu();
+      return false;
+    }
+    this.openPauseMenu();
+    return true;
+  }
+
+  private renderPauseMenuContent(): void {
+    if (!this.pauseModalEl) return;
+    const muted = Boolean(this.callbacks.isAudioMuted?.());
+    const touchOn = Boolean(this.callbacks.isTouchEnabled?.());
+    const presetLabel = this.callbacks.getCombatPresetLabel?.() ?? '호쾌한 난장판';
+
+    const btnStyle = (bg: string, border: string) =>
+      `width:100%;padding:10px 14px;border-radius:8px;border:1.5px solid ${border};background:${bg};color:#f8fafc;font-size:13.5px;font-weight:800;cursor:pointer;text-align:center;`;
+
+    this.pauseModalEl.innerHTML = `
+      <div style="width:540px;max-width:94vw;background:linear-gradient(180deg,#1c140d,#0f172a);border:2.5px solid #facc15;border-radius:16px;padding:20px 24px;color:#f8fafc;box-shadow:0 24px 60px rgba(0,0,0,0.9);">
+        <div style="text-align:center;margin-bottom:14px;">
+          <div style="font-size:11px;letter-spacing:2px;color:#f59e0b;font-weight:800;">PAUSED · 일시정지</div>
+          <div style="font-size:26px;font-weight:900;color:#fef08a;margin-top:2px;">⚔ 전장 일시정지</div>
+        </div>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px;">
+          <button data-pause-resume style="${btnStyle('linear-gradient(180deg,#ea580c,#b45309)', '#fef08a')}grid-column:span 2;font-size:15px;">▶ 전투 계속하기 (ESC)</button>
+          <button data-pause-mute style="${btnStyle('#1e293b', muted ? '#64748b' : '#38bdf8')}">${muted ? '🔇 사운드: 꺼짐 (M)' : '🔊 사운드: 켜짐 (M)'}</button>
+          <button data-pause-preset style="${btnStyle('#1e293b', '#c084fc')}">🎮 타격감: ${presetLabel}</button>
+          <button data-pause-touch style="${btnStyle('#1e293b', touchOn ? '#4ade80' : '#64748b')}">📱 가상 패드: ${touchOn ? '켜짐' : '자동/꺼짐'}</button>
+          <button data-pause-party style="${btnStyle('#1e293b', '#facc15')}">⚔ 파티 / 영웅 변경</button>
+          <button data-pause-retry style="${btnStyle('#334155', '#94a3b8')}">🔄 처음부터 재시작 (R)</button>
+          <button data-pause-menu style="${btnStyle('#334155', '#94a3b8')}">🏠 타이틀 화면으로</button>
+        </div>
+
+        <div style="background:rgba(15,23,42,0.86);border:1px solid #334155;border-radius:10px;padding:10px 14px;font-size:11.5px;line-height:1.55;color:#cbd5e1;">
+          <div style="font-weight:900;color:#fde047;margin-bottom:4px;">📖 조작 가이드 (두 가지 키 배치 모두 지원!)</div>
+          <div>• <b>이동</b>: <span style="color:#fff;">W A S D</span> 또는 <span style="color:#fff;">방향키</span> &nbsp;|&nbsp; <b>영웅 교대</b>: <span style="color:#fff;">TAB</span></div>
+          <div>• <b>기본 연타(누르고 있어도 콤보!)</b>: <span style="color:#7dd3fc;">Z</span> 또는 <span style="color:#7dd3fc;">J</span> &nbsp;|&nbsp; <b>강공격 날리기</b>: <span style="color:#fb923c;">X</span> 또는 <span style="color:#fb923c;">K</span></div>
+          <div>• <b>방어 가드(적 강타·폭탄 방어)</b>: <span style="color:#cbd5e1;">C / Shift / L</span> &nbsp;|&nbsp; <b>물건 들기·던지기</b>: <span style="color:#fde047;">SPACE / E</span></div>
+          <div>• <b>3대 필살기</b>: <span style="color:#fde047;">V(1)·U</span> 특수기 · <span style="color:#38bdf8;">B(2)·I</span> 속성기 · <span style="color:#facc15;">N(3)·O</span> <b>위기탈출 극오의!</b></div>
+        </div>
+      </div>
+    `;
+
+    this.pauseModalEl.querySelector<HTMLButtonElement>('[data-pause-resume]')!.onclick = () =>
+      this.closePauseMenu();
+    this.pauseModalEl.querySelector<HTMLButtonElement>('[data-pause-mute]')!.onclick = () => {
+      this.callbacks.onToggleMute?.();
+      this.renderPauseMenuContent();
+    };
+    this.pauseModalEl.querySelector<HTMLButtonElement>('[data-pause-preset]')!.onclick = () => {
+      this.callbacks.onToggleCombatPreset?.();
+      this.renderPauseMenuContent();
+    };
+    this.pauseModalEl.querySelector<HTMLButtonElement>('[data-pause-touch]')!.onclick = () => {
+      this.callbacks.onToggleTouchControls?.();
+      this.renderPauseMenuContent();
+    };
+    this.pauseModalEl.querySelector<HTMLButtonElement>('[data-pause-party]')!.onclick = () => {
+      this.closePauseMenu();
+      if (this.lastSaveSnapshot) {
+        this.callbacks.onOpenHeroChange();
+      } else {
+        this.callbacks.onOpenHeroChange();
+      }
+    };
+    this.pauseModalEl.querySelector<HTMLButtonElement>('[data-pause-retry]')!.onclick = () => {
+      this.hideAllModals();
+      this.callbacks.onRetryStage();
+    };
+    this.pauseModalEl.querySelector<HTMLButtonElement>('[data-pause-menu]')!.onclick = () => {
+      this.hideAllModals();
+      this.callbacks.onReturnToMainMenu();
+    };
   }
 
   // ==================== SHORT SKIPPABLE STORY INTRO ====================
@@ -601,7 +805,7 @@ export class StageOverlayUI implements IGameSystem {
     const heroListHtml = data.heroes
       .map((h) => {
         const p = HERO_DATA[h.heroId];
-        return `<span style="display:inline-flex;align-items:center;gap:4px;padding:3px 9px;border-radius:6px;background:#1e293b;border:1px solid ${p.accentColor};font-size:12px;"><b style="color:${p.accentColor};">[${h.control === 'HUMAN' ? `P${h.slotIndex + 1}` : 'AI'}] ${p.displayName}</b> <span style="color:#94a3b8;font-size:11px;">보물 ${h.treasures.length}개</span></span>`;
+        return `<span style="display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:8px;background:#1e293b;border:1.5px solid ${p.accentColor};font-size:12px;">${renderHeroPortraitHtml(h.heroId, 32)}<b style="color:${p.accentColor};">[${h.control === 'HUMAN' ? `P${h.slotIndex + 1}` : 'AI'}] ${p.displayName}</b> <span style="color:#94a3b8;font-size:11px;">보물 ${h.treasures.length}개</span></span>`;
       })
       .join(' ');
 
@@ -693,6 +897,7 @@ export class StageOverlayUI implements IGameSystem {
   public hideAllModals(): void {
     window.clearTimeout(this.introTimer);
     if (this.menuModalEl) this.menuModalEl.style.display = 'none';
+    if (this.pauseModalEl) this.pauseModalEl.style.display = 'none';
     if (this.introBoxEl) this.introBoxEl.style.display = 'none';
     if (this.treasureModalEl) this.treasureModalEl.style.display = 'none';
     if (this.resultModalEl) this.resultModalEl.style.display = 'none';

@@ -132,6 +132,7 @@ export class Bandit {
   public coverObject: EnvironmentalObject | null = null;
   public tripImmunityMs = 0;
   public hasBeenCameraGagged = false;
+  public isStragglerHighlighted = false;
 
   private readonly scene: Phaser.Scene;
   private readonly tuning: CombatTuning;
@@ -242,6 +243,7 @@ export class Bandit {
         strokeThickness: 4,
       })
       .setOrigin(0.5)
+      .setAlpha(0)
       .setVisible(false);
 
     this.aiDebugText = scene.add
@@ -1869,6 +1871,18 @@ export class Bandit {
     const shScale = Phaser.Math.Clamp(1 - this.elevationZ * 0.0045, 0.45, 1);
     this.shadow.setScale(shScale, shScale);
     this.shadow.setAlpha(0.4 * shScale);
+
+    // Subtle pulsing amber target ring under the final 1-3 stragglers of a wave!
+    if (this.activeSkill === 'NONE') {
+      if (this.isStragglerHighlighted && !this.isNeutralized) {
+        this.skillTelegraphGfx.clear();
+        const p = 0.55 + Math.sin(performance.now() * 0.012) * 0.3;
+        this.skillTelegraphGfx.lineStyle(2.5, 0xfacc15, p);
+        this.skillTelegraphGfx.strokeEllipse(0, 3, 58, 22);
+      } else {
+        this.skillTelegraphGfx.clear();
+      }
+    }
 
     // Keep battlefield clean: no floating Korean reaction text above bandits' heads
     this.reactionText.setVisible(false);

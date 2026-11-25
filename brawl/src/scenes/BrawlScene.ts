@@ -59,7 +59,11 @@ import { Projectile } from '../entities/Projectile';
 import { SurfaceHazard } from '../entities/SurfaceHazard';
 import { TreasurePickup } from '../entities/TreasurePickup';
 import { ArrowFireRequest, Warrior } from '../entities/Warrior';
-import { createDefaultPolishSettings, PolishSettings } from '../config/polishConfig';
+import {
+  applyCombatFeelPreset,
+  createDefaultPolishSettings,
+  PolishSettings,
+} from '../config/polishConfig';
 import { AIHeroController } from '../systems/AIHeroController';
 import { CameraGagController } from '../systems/CameraGagController';
 import { CollisionChainManager } from '../systems/CollisionChainManager';
@@ -77,7 +81,8 @@ import { HeroActionInput, MultiInputManager } from '../systems/MultiInputManager
 import { PartySetupOverlay } from '../systems/PartySetupOverlay';
 import { PerformanceMonitor } from '../systems/PerformanceMonitor';
 import { ScreenShakeSystem } from '../systems/ScreenShakeSystem';
-import { HumanTreasureOffer, StageOverlayUI } from '../systems/StageOverlayUI';
+import { StageOverlayUI } from '../systems/StageOverlayUI';
+import { TouchControlsOverlay } from '../systems/TouchControlsOverlay';
 import { MarketplaceArena } from '../world/MarketplaceArena';
 
 const HERO_SPAWN_OFFSETS: ReadonlyArray<{ x: number; y: number }> = [
@@ -108,6 +113,7 @@ export class BrawlScene extends Phaser.Scene {
   private systems!: SystemRegistry;
   private inputSystem!: InputSystem;
   private multiInput!: MultiInputManager;
+  private touchControls!: TouchControlsOverlay;
   private aiHeroCtrl!: AIHeroController;
   private partyOverlay!: PartySetupOverlay;
   private stageOverlay!: StageOverlayUI;
@@ -123,6 +129,7 @@ export class BrawlScene extends Phaser.Scene {
   private chainManager!: CollisionChainManager;
   private cameraGag!: CameraGagController;
   private arena!: MarketplaceArena;
+  private onWindowBlurBound?: () => void;
 
   private readonly heroes: Warrior[] = [];
   private readonly projectiles: Projectile[] = [];
@@ -183,6 +190,7 @@ export class BrawlScene extends Phaser.Scene {
         onGamepadDisconnected: (deviceId) => this.handleDeviceDisconnected(deviceId),
       }),
     );
+    this.touchControls = this.systems.register(new TouchControlsOverlay());
     this.aiHeroCtrl = new AIHeroController(this.step5Tuning);
     this.hitStop = this.systems.register(new HitStopSystem(this.tuning, this.polishSettings));
     this.screenShake = this.systems.register(
@@ -213,15 +221,50 @@ export class BrawlScene extends Phaser.Scene {
         },
         onRetryStage: () => this.startStage1Run(false),
         onOpenHeroChange: () => {
-          this.stageOverlay.showMainMenu(this.progressStore.snapshot);
+          if (this.stageDirector.state === 'VICTORY' || this.stageDirector.state === 'DEFEAT') {
+            this.stageOverlay.showMainMenu(this.progressStore.snapshot);
+          } else {
+            this.partyOverlay.setVisible(true);
+          }
         },
         onReturnToMainMenu: () => this.openMainMenu(),
+        isAudioMuted: () => this.audio.isMuted,
+        onToggleMute: () => this.toggleAudioMuteWithToast(),
+        isTouchEnabled: () => this.touchControls.isEnabled,
+        onToggleTouchControls: () => this.touchControls.toggleEnabled(),
+        getCombatPresetLabel: () =>
+          this.polishSettings.activePreset === 'ARCADE_CLASSIC' ? '클래식 아케이드' : '호쾌한 난장판',
+        onToggleCombatPreset: () => {
+          const next =
+            this.polishSettings.activePreset === 'ARCADE_CLASSIC'
+              ? 'MAXIMUM_MAYHEM'
+              : 'ARCADE_CLASSIC';
+          applyCombatFeelPreset(
+            next,
+            this.tuning,
+            this.mayhemTuning,
+            this.step4Tuning,
+            this.polishSettings,
+          );
+          this.applyLiveTuning();
+          return next === 'ARCADE_CLASSIC' ? '클래식 아케이드' : '호쾌한 난장판';
+        },
       }),
     );
     this.combatHud = this.systems.register(
       new CombatHud(
         () => this.startStage1Run(false),
         () => this.partyOverlay.toggle(),
+        () => {
+          if (this.partyOverlay.isOpen) {
+            this.partyOverlay.setVisible(false);
+          } else {
+            this.stageOverlay.togglePauseMenu();
+          }
+        },
+        () => {
+          this.toggleAudioMuteWithToast();
+        },
       ),
     );
     this.debugOverlay = this.systems.register(new DebugOverlay());
@@ -378,11 +421,28 @@ export class BrawlScene extends Phaser.Scene {
       this.openMainMenu();
     }
 
+    if (typeof window !== 'undefined') {
+      this.onWindowBlurBound = () => {
+        this.inputSystem.resetKeys();
+      };
+      window.addEventListener('blur', this.onWindowBlurBound);
+    }
+
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, this.handleShutdown, this);
   }
 
+  private toggleAudioMuteWithToast(): boolean {
+    const muted = this.audio.toggleMute();
+    this.partyOverlay.showToast(muted ? '🔇 사운드 꺼짐' : '🔊 사운드 켜짐', 1300);
+    return muted;
+  }
+
   public update(time: number, delta: number): void {
-    const kbInput = this.inputSystem.sample();
+    const kbInput = this.inputSystem.sample(delta);
+
+    if (kbInput.mutePressed) {
+      this.toggleAudioMuteWithToast();
+    }
 
     if (kbInput.toggleDebugPressed) {
       const visible = this.debugOverlay.toggle();
@@ -394,17 +454,70 @@ export class BrawlScene extends Phaser.Scene {
       this.eventsBus.emit('combat:panel_toggled', { visible });
     }
 
+    if (kbInput.pausePressed) {
+      if (this.partyOverlay.isOpen) {
+        this.partyOverlay.setVisible(false);
+        return;
+      }
+      if (this.stageOverlay.isPauseOpen) {
+        this.inputSystem.resetKeys();
+        this.stageOverlay.closePauseMenu();
+        return;
+      }
+      if (!this.stageOverlay.isBlockingCombat) {
+        this.inputSystem.resetKeys();
+        this.stageOverlay.openPauseMenu();
+        return;
+      }
+    }
+
     if (kbInput.partySetupPressed && !this.stageOverlay.isBlockingCombat) {
       this.partyOverlay.toggle();
       return;
     }
 
+    const modalBlocking = this.partyOverlay.isOpen || this.stageOverlay.isBlockingCombat;
+    this.touchControls.setSuppressedByModal(modalBlocking);
+
     // Always animate ambient marketplace petals & adaptive BGM even during pauses
     this.arena.update(delta);
     this.audio.updateAdaptiveBgm(delta);
 
-    // Pause combat simulation cleanly while Party Setup or Stage Modals (Menu/Intro/Treasure/Victory/Defeat) are open
-    if (this.partyOverlay.isOpen || this.stageOverlay.isBlockingCombat) return;
+    // Keep HUD mute icon & responsive bar synced even while paused
+    if (modalBlocking) {
+      this.combatHud.render(
+        {
+          heroes: this.heroes.map((h) => ({
+            slotIndex: h.slotIndex,
+            heroId: h.heroId,
+            control: h.controlType,
+            hp: h.hp,
+            maxHp: h.maxHp,
+            specialReadyRatio: h.specialReadyRatio,
+            skill2ReadyRatio: h.skill2ReadyRatio,
+            skill3ReadyRatio: h.skill3ReadyRatio,
+            isLowHpEmergency: h.isLowHpEmergency,
+            isDefeated: h.isDefeated,
+            treasureCount: h.acquiredTreasures.length,
+          })),
+          allHumansDefeated: false,
+          enemiesActive:
+            this.bandits.filter((b) => !b.isNeutralized).length + (this.boss?.isAlive ? 1 : 0),
+          enemiesNeutralized: this.enemiesDefeated,
+          enemiesSurrendered: 0,
+          comboHits: this.comboHits,
+          waveNumber: this.stageDirector.waveIndex + 1,
+          totalWaves: this.stageDirector.totalWaves,
+          score: this.stageDirector.stats.totalScore,
+          isMuted: this.audio.isMuted,
+          hideBottomHint: this.touchControls.isEnabled,
+          suppressBuiltInDefeat: true,
+        },
+        this,
+        delta,
+      );
+      return;
+    }
 
     if (kbInput.restartPressed) {
       this.startStage1Run(false);
@@ -421,13 +534,15 @@ export class BrawlScene extends Phaser.Scene {
     );
     this.multiInput.pollJoinRequests(assignedDevices);
 
-    // Gather unified inputs (Human Keyboard/Gamepad OR AIHeroController) for each active hero
+    const touchSample = this.touchControls.sample(delta);
+
+    // Gather unified inputs (Human Keyboard/Touch/Gamepad OR AIHeroController) for each active hero
     const heroInputs = new Map<HeroId, HeroActionInput>();
     for (const hero of this.heroes) {
       const slot = this.party.getSlotByHero(hero.heroId);
       let actionInput: HeroActionInput;
       if (slot && slot.control === 'HUMAN' && slot.deviceId) {
-        actionInput = this.multiInput.sampleDevice(slot.deviceId, kbInput);
+        actionInput = this.multiInput.sampleDevice(slot.deviceId, kbInput, touchSample);
       } else {
         actionInput = this.aiHeroCtrl.computeInput(
           hero,
@@ -561,8 +676,14 @@ export class BrawlScene extends Phaser.Scene {
       }
 
       // Update bandits (each targets nearest alive hero!)
+      const highlightStragglers =
+        this.stageDirector.remainingSpawnsInWave === 0 &&
+        activeNonNeutralized > 0 &&
+        activeNonNeutralized <= 3;
+
       for (let i = this.bandits.length - 1; i >= 0; i--) {
         const bandit = this.bandits[i];
+        bandit.isStragglerHighlighted = highlightStragglers && !bandit.isNeutralized;
         const targetHero = this.findNearestAliveHero(bandit.x, bandit.y);
         bandit.update(
           delta,
@@ -655,6 +776,8 @@ export class BrawlScene extends Phaser.Scene {
         waveNumber: this.stageDirector.waveIndex + 1,
         totalWaves: this.stageDirector.totalWaves,
         score: this.stageDirector.stats.totalScore,
+        isMuted: this.audio.isMuted,
+        hideBottomHint: this.touchControls.isEnabled,
         suppressBuiltInDefeat: true,
       },
       this,
@@ -3558,6 +3681,10 @@ export class BrawlScene extends Phaser.Scene {
   }
 
   private handleShutdown(): void {
+    if (typeof window !== 'undefined' && this.onWindowBlurBound) {
+      window.removeEventListener('blur', this.onWindowBlurBound);
+      this.onWindowBlurBound = undefined;
+    }
     this.clearAllHeroes();
     this.clearAllProjectiles();
     this.clearAllBandits();

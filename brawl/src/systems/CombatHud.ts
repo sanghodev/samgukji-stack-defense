@@ -27,6 +27,8 @@ export interface CombatHudSnapshot {
   waveNumber?: number;
   totalWaves?: number;
   score?: number;
+  isMuted?: boolean;
+  hideBottomHint?: boolean;
   suppressBuiltInDefeat?: boolean;
 }
 
@@ -51,19 +53,30 @@ export class CombatHud implements IGameSystem {
 
   private readonly heroCards: HeroCardNodes[] = [];
   private counterText?: Phaser.GameObjects.Text;
+  private muteBtnText?: Phaser.GameObjects.Text;
   private comboText?: Phaser.GameObjects.Text;
+  private bottomHintContainer?: Phaser.GameObjects.Container;
   private statusOverlay?: Phaser.GameObjects.Container;
   private statusTitle?: Phaser.GameObjects.Text;
   private statusSub?: Phaser.GameObjects.Text;
   private readonly onRestart: () => void;
   private readonly onOpenPartySetup: () => void;
+  private readonly onTogglePause?: () => void;
+  private readonly onToggleMute?: () => void;
 
   private lastComboShown = 0;
   private rejectFlashMs = 0;
 
-  constructor(onRestart: () => void, onOpenPartySetup: () => void) {
+  constructor(
+    onRestart: () => void,
+    onOpenPartySetup: () => void,
+    onTogglePause?: () => void,
+    onToggleMute?: () => void,
+  ) {
     this.onRestart = onRestart;
     this.onOpenPartySetup = onOpenPartySetup;
+    this.onTogglePause = onTogglePause;
+    this.onToggleMute = onToggleMute;
   }
 
   public flashSpecialRejected(): void {
@@ -123,17 +136,17 @@ export class CombatHud implements IGameSystem {
     }
     void cardH;
 
-    // 2. Top-right Party Setup button + Title + Counter
-    const badgeW = 244;
+    // 2. Top-right Stage Score + Quick Arcade Controls (Party [P] · Mute [M] · Pause [ESC])
+    const badgeW = 264;
     const bx = GAME_WIDTH - badgeW - 12;
     const titleBg = scene.add.graphics().setDepth(DEPTH_LAYERS.HUD);
-    titleBg.fillStyle(0x1c120c, 0.84);
+    titleBg.fillStyle(0x1c120c, 0.88);
     titleBg.fillRoundedRect(bx, 10, badgeW, 56, 6);
-    titleBg.lineStyle(1.5, 0xfbbf24, 0.72);
+    titleBg.lineStyle(1.5, 0xfbbf24, 0.76);
     titleBg.strokeRoundedRect(bx, 10, badgeW, 56, 6);
 
     this.counterText = scene.add
-      .text(bx + badgeW / 2, 22, '제압: 0 | 항복: 0 | 산적: 12', {
+      .text(bx + badgeW / 2, 22, 'W1/5 · 0점 · 적:0', {
         fontFamily: 'Malgun Gothic, Apple SD Gothic Neo, sans-serif',
         fontSize: '11px',
         fontStyle: 'bold',
@@ -142,25 +155,36 @@ export class CombatHud implements IGameSystem {
       .setOrigin(0.5)
       .setDepth(DEPTH_LAYERS.HUD + 1);
 
-    const partyBtn = scene.add
-      .rectangle(bx + badgeW / 2, 48, 186, 22, 0x1e293b, 0.95)
-      .setStrokeStyle(1, 0xfbbf24, 0.8)
-      .setDepth(DEPTH_LAYERS.HUD + 1)
-      .setInteractive({ useHandCursor: true });
-    const partyBtnTxt = scene.add
-      .text(bx + badgeW / 2, 48, '⚔ 파티 편성 1~4인 (P)', {
-        fontFamily: 'Malgun Gothic, Apple SD Gothic Neo, sans-serif',
-        fontSize: '11px',
-        fontStyle: 'bold',
-        color: '#fde047',
-      })
-      .setOrigin(0.5)
-      .setDepth(DEPTH_LAYERS.HUD + 2);
+    const makeHudBtn = (
+      centerX: number,
+      width: number,
+      label: string,
+      color: string,
+      onClick: () => void,
+    ): Phaser.GameObjects.Text => {
+      const rect = scene.add
+        .rectangle(centerX, 48, width, 22, 0x1e293b, 0.95)
+        .setStrokeStyle(1, 0xfbbf24, 0.78)
+        .setDepth(DEPTH_LAYERS.HUD + 1)
+        .setInteractive({ useHandCursor: true });
+      const txt = scene.add
+        .text(centerX, 48, label, {
+          fontFamily: 'Malgun Gothic, Apple SD Gothic Neo, sans-serif',
+          fontSize: '10.5px',
+          fontStyle: 'bold',
+          color,
+        })
+        .setOrigin(0.5)
+        .setDepth(DEPTH_LAYERS.HUD + 2);
+      rect.on('pointerover', () => rect.setFillStyle(0x334155));
+      rect.on('pointerout', () => rect.setFillStyle(0x1e293b));
+      rect.on('pointerdown', () => onClick());
+      return txt;
+    };
 
-    partyBtn.on('pointerover', () => partyBtn.setFillStyle(0x334155));
-    partyBtn.on('pointerout', () => partyBtn.setFillStyle(0x1e293b));
-    partyBtn.on('pointerdown', () => this.onOpenPartySetup());
-    void partyBtnTxt;
+    makeHudBtn(bx + 62, 108, '⚔ 파티 (P)', '#fde047', () => this.onOpenPartySetup());
+    this.muteBtnText = makeHudBtn(bx + 144, 44, '🔊', '#7dd3fc', () => this.onToggleMute?.());
+    makeHudBtn(bx + 214, 82, '⏸ 메뉴 (ESC)', '#f8fafc', () => this.onTogglePause?.());
 
     // 3. Combo Hit Counter
     this.comboText = scene.add
@@ -176,27 +200,30 @@ export class CombatHud implements IGameSystem {
       .setDepth(DEPTH_LAYERS.HUD + 2)
       .setVisible(false);
 
-    // 4. Bottom-right controls legend
-    const hintW = 910;
+    // 4. Bottom-right controls legend (auto-hides when mobile touch pad is active)
+    const hintW = 948;
     const hintX = GAME_WIDTH - hintW - 12;
-    const hintBg = scene.add.graphics().setDepth(DEPTH_LAYERS.HUD);
-    hintBg.fillStyle(0x0b101b, 0.84);
+    const hintBg = scene.add.graphics();
+    hintBg.fillStyle(0x0b101b, 0.86);
     hintBg.fillRoundedRect(hintX, GAME_HEIGHT - 32, hintW, 24, 5);
     hintBg.lineStyle(1, 0x94a3b8, 0.35);
     hintBg.strokeRoundedRect(hintX, GAME_HEIGHT - 32, hintW, 24, 5);
 
-    scene.add
+    const hintTxt = scene.add
       .text(
         hintX + hintW / 2,
         GAME_HEIGHT - 20,
-        'WASD: 이동 · Z: 콤보 · X: 강공격 · C/Shift: 방어 · V/B/N(1·2·3): 스킬3종(N:위기탈출!) · SPACE: 던지기 · TAB: 교대 · P: 파티',
+        'WASD/방향키: 이동 · Z(J): 연타 · X(K): 강타 · C(L): 방어 · V/B/N(1·2·3): 스킬3종(N:위기탈출!) · SPACE: 던지기 · TAB: 교대 · ESC: 일시정지',
         {
           fontFamily: 'Malgun Gothic, Apple SD Gothic Neo, sans-serif',
           fontSize: '10.5px',
           color: '#e2e8f0',
         },
       )
-      .setOrigin(0.5)
+      .setOrigin(0.5);
+
+    this.bottomHintContainer = scene.add
+      .container(0, 0, [hintBg, hintTxt])
       .setDepth(DEPTH_LAYERS.HUD + 1);
 
     // 5. Center Defeat Banner
@@ -349,6 +376,11 @@ export class CombatHud implements IGameSystem {
     const waveStr = snap.waveNumber ? `W${snap.waveNumber}/${snap.totalWaves ?? 5} · ` : '';
     const scoreStr = snap.score !== undefined ? `${snap.score.toLocaleString()}점 · ` : '';
     this.counterText?.setText(`${waveStr}${scoreStr}적:${snap.enemiesActive}`);
+    if (this.muteBtnText) {
+      this.muteBtnText.setText(snap.isMuted ? '🔇' : '🔊');
+      this.muteBtnText.setColor(snap.isMuted ? '#94a3b8' : '#7dd3fc');
+    }
+    this.bottomHintContainer?.setVisible(!snap.hideBottomHint);
 
     if (this.comboText) {
       if (snap.comboHits >= 2) {
@@ -382,9 +414,11 @@ export class CombatHud implements IGameSystem {
 
   public destroy(): void {
     this.statusOverlay?.destroy(true);
+    this.bottomHintContainer?.destroy(true);
     for (const c of this.heroCards) c.container.destroy(true);
     this.heroCards.length = 0;
     this.counterText?.destroy();
+    this.muteBtnText?.destroy();
     this.comboText?.destroy();
   }
 }

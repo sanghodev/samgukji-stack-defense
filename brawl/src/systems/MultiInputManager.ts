@@ -119,6 +119,7 @@ export class MultiInputManager implements IGameSystem {
   public sampleDevice(
     deviceId: string,
     keyboardSample: MoveInputState,
+    touchSample?: HeroActionInput | null,
   ): HeroActionInput {
     // Simulated virtual input takes priority if active (for testing)
     const sim = this.simulatedInputs.get(deviceId);
@@ -128,17 +129,19 @@ export class MultiInputManager implements IGameSystem {
     }
 
     if (deviceId === 'keyboard') {
+      const tx = touchSample && touchSample.isMoving ? touchSample.x : keyboardSample.x;
+      const ty = touchSample && touchSample.isMoving ? touchSample.y : keyboardSample.y;
       return {
-        x: keyboardSample.x,
-        y: keyboardSample.y,
-        isMoving: keyboardSample.isMoving,
-        lightAttackPressed: keyboardSample.lightAttackPressed,
-        heavyAttackPressed: keyboardSample.heavyAttackPressed,
-        specialPressed: keyboardSample.specialPressed,
-        skill2Pressed: keyboardSample.skill2Pressed,
-        skill3Pressed: keyboardSample.skill3Pressed,
-        interactPressed: keyboardSample.interactPressed,
-        guardHeld: keyboardSample.guardHeld,
+        x: tx,
+        y: ty,
+        isMoving: Boolean(keyboardSample.isMoving || touchSample?.isMoving),
+        lightAttackPressed: Boolean(keyboardSample.lightAttackPressed || touchSample?.lightAttackPressed),
+        heavyAttackPressed: Boolean(keyboardSample.heavyAttackPressed || touchSample?.heavyAttackPressed),
+        specialPressed: Boolean(keyboardSample.specialPressed || touchSample?.specialPressed),
+        skill2Pressed: Boolean(keyboardSample.skill2Pressed || touchSample?.skill2Pressed),
+        skill3Pressed: Boolean(keyboardSample.skill3Pressed || touchSample?.skill3Pressed),
+        interactPressed: Boolean(keyboardSample.interactPressed || touchSample?.interactPressed),
+        guardHeld: Boolean(keyboardSample.guardHeld || touchSample?.guardHeld),
       };
     }
 

@@ -93,6 +93,8 @@ export class CombatAudioManager implements IAudioSystem {
   private unlockBound?: () => void;
   private activeVoices = 0;
   private duckUntilTime = 0;
+  private muted = false;
+  private static readonly MUTE_STORAGE_KEY = 'tkm_audio_muted_v1';
 
   constructor(
     tuning: CombatTuning,
@@ -102,6 +104,34 @@ export class CombatAudioManager implements IAudioSystem {
     this.tuning = tuning;
     this.mayhemTuning = mayhemTuning;
     this.polish = polish;
+    try {
+      if (typeof window !== 'undefined' && window.localStorage) {
+        this.muted = window.localStorage.getItem(CombatAudioManager.MUTE_STORAGE_KEY) === '1';
+      }
+    } catch {
+      this.muted = false;
+    }
+  }
+
+  public get isMuted(): boolean {
+    return this.muted;
+  }
+
+  public setMuted(muted: boolean): void {
+    this.muted = muted;
+    try {
+      if (typeof window !== 'undefined' && window.localStorage) {
+        window.localStorage.setItem(CombatAudioManager.MUTE_STORAGE_KEY, muted ? '1' : '0');
+      }
+    } catch {
+      // Ignore storage quota / privacy mode errors
+    }
+    this.syncVolume();
+  }
+
+  public toggleMute(): boolean {
+    this.setMuted(!this.muted);
+    return this.muted;
   }
 
   public get activeVoiceCount(): number {
@@ -163,7 +193,7 @@ export class CombatAudioManager implements IAudioSystem {
    * so punchy combat transients cut cleanly through the mix.
    */
   public duckMusic(durationMs = 320): void {
-    if (!this.ctx || !this.musicGain) return;
+    if (!this.ctx || !this.musicGain || this.muted) return;
     const duckDepth = this.polish?.musicDuckingAmount ?? 0.55;
     if (duckDepth <= 0.02) return;
     const now = this.ctx.currentTime;
@@ -178,7 +208,7 @@ export class CombatAudioManager implements IAudioSystem {
   public syncVolume(): void {
     if (!this.ctx) return;
     const now = this.ctx.currentTime;
-    const master = Math.max(0, Math.min(1.5, this.polish?.masterVolume ?? 1.0));
+    const master = this.muted ? 0 : Math.max(0, Math.min(1.5, this.polish?.masterVolume ?? 1.0));
     const combat = Math.max(0, Math.min(1.5, (this.polish?.combatVolume ?? 1.0) * this.tuning.audioVolume));
     const env = Math.max(
       0,

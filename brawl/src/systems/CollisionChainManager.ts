@@ -360,14 +360,15 @@ export class CollisionChainManager {
   }
 
   private spawnChainBadge(x: number, y: number, chainDepth: number): void {
+    if (chainDepth < 2) return;
     const scale = getPerspectiveScale(y);
-    const label = chainDepth >= 2 ? `연쇄 x${chainDepth}!` : '충돌!';
+    const label = `×${chainDepth}!`;
     const txt = this.deps.scene.add
-      .text(x, y - 54 * scale, label, {
-        fontFamily: 'Malgun Gothic, Apple SD Gothic Neo, sans-serif',
+      .text(x, y - 52 * scale, label, {
+        fontFamily: 'Consolas, Menlo, monospace',
         fontSize: `${Math.min(24, 15 + chainDepth * 2)}px`,
         fontStyle: 'bold',
-        color: chainDepth >= 2 ? '#fb923c' : '#fde047',
+        color: chainDepth >= 3 ? '#facc15' : '#fb923c',
         stroke: '#1c120c',
         strokeThickness: 5,
       })
@@ -376,10 +377,10 @@ export class CollisionChainManager {
 
     this.deps.scene.tweens.add({
       targets: txt,
-      y: txt.y - 34 * scale,
+      y: txt.y - 30 * scale,
       alpha: 0,
       scale: 1.15,
-      duration: 620,
+      duration: 520,
       ease: 'Cubic.easeOut',
       onComplete: () => txt.destroy(),
     });

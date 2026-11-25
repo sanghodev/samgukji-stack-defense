@@ -20,7 +20,7 @@ export class DebugOverlay implements IGameSystem {
 
   private container?: Phaser.GameObjects.Container;
   private text?: Phaser.GameObjects.Text;
-  private visible = true;
+  private visible = false;
 
   public init(ctx: SystemContext): void {
     const { scene } = ctx;
@@ -41,6 +41,7 @@ export class DebugOverlay implements IGameSystem {
     this.container = scene.add.container(14, 96, [bg, this.text]);
     this.container.setDepth(DEPTH_LAYERS.DEBUG);
     this.container.setScrollFactor(0);
+    this.container.setVisible(false);
   }
 
   public toggle(): boolean {
